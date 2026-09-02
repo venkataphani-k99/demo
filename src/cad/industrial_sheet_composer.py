@@ -658,8 +658,12 @@ class DynamicSheetComposer:
         """Project physical 3D edges into centered 2D view segments."""
         segs: List[List[float]] = []
         try:
-            edges = list(solid.Edges)[:300]
-            for edge in edges:
+            edges = list(solid.Edges)
+            total = len(edges)
+            # Sample uniformly across the entire model so all assembly components are drawn
+            step = max(1, total // 800)
+            sampled_edges = [edges[i] for i in range(0, total, step)]
+            for edge in sampled_edges:
                 pts = edge.discretize(Number=6)
                 if len(pts) >= 2:
                     for i in range(len(pts) - 1):
@@ -695,11 +699,14 @@ class DynamicSheetComposer:
 
         try:
             # 1. Background projected geometry (behind cutting plane in light dashed lines)
-            for e in list(solid.Edges)[:150]:
+            all_edges = list(solid.Edges)
+            bg_step = max(1, len(all_edges) // 400)
+            for i in range(0, len(all_edges), bg_step):
+                e = all_edges[i]
                 pts = e.discretize(Number=5)
                 if len(pts) >= 2:
-                    for i in range(len(pts) - 1):
-                        p1, p2 = pts[i], pts[i + 1]
+                    for j in range(len(pts) - 1):
+                        p1, p2 = pts[j], pts[j + 1]
                         if p1.y >= cy or p2.y >= cy:
                             bg_segs.append([round(p1.x - cx, 1), round(p1.z - cz, 1), round(p2.x - cx, 1), round(p2.z - cz, 1)])
 

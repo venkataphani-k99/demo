@@ -174,14 +174,41 @@ def load_step(file_path: str | Path) -> StepLoadResult:
             raise CadImportError(f"No CAD objects were generated from file: {path.name}")
 
         # Collect shapes from objects (filter out infinite datum planes/axes)
-        solids = [obj.Shape for obj in objects if hasattr(obj, "Shape") and not obj.Shape.isNull() and obj.Shape.ShapeType == "Solid"]
-        if solids:
-            primary_shape = solids[0] if len(solids) == 1 else Part.makeCompound(solids)
+        finite_objs = [
+            obj for obj in objects
+            if hasattr(obj, "Shape") and not obj.Shape.isNull()
+            and abs(obj.Shape.BoundBox.XLength) < 1e6
+            and abs(obj.Shape.BoundBox.YLength) < 1e6
+            and abs(obj.Shape.BoundBox.ZLength) < 1e6
+            and len(obj.Shape.Faces) > 0
+        ]
+        if not finite_objs:
+            raise CadImportError(f"No valid B-Rep shapes found in CAD model: {path.name}")
+
+        # Check for top-level root assembly parts (e.g. App::Part or Part::Compound containing multiple placed solids)
+        multi_solid_containers = [
+            obj for obj in finite_objs
+            if getattr(obj, "TypeId", "") in ("App::Part", "Part::Compound") and len(obj.Shape.Solids) > 1
+        ]
+
+        if multi_solid_containers:
+            # Root assembly object has the maximum solid count / face count
+            root_assembly = max(multi_solid_containers, key=lambda o: len(o.Shape.Solids))
+            primary_shape = root_assembly.Shape
         else:
-            finite_shapes = [obj.Shape for obj in objects if hasattr(obj, "Shape") and not obj.Shape.isNull() and abs(obj.Shape.BoundBox.XLength) < 1e6]
-            if not finite_shapes:
-                raise CadImportError(f"No valid B-Rep shapes found in CAD model: {path.name}")
-            primary_shape = finite_shapes[0] if len(finite_shapes) == 1 else Part.makeCompound(finite_shapes)
+            solids = [obj for obj in finite_objs if obj.Shape.ShapeType == "Solid"]
+            if len(solids) == 1:
+                primary_shape = solids[0].Shape
+            elif len(solids) > 1:
+                placed_shapes = []
+                for o in solids:
+                    shp = o.Shape.copy()
+                    if hasattr(o, "Placement") and o.Placement:
+                        shp.Placement = o.Placement
+                    placed_shapes.append(shp)
+                primary_shape = Part.makeCompound(placed_shapes)
+            else:
+                primary_shape = finite_objs[0].Shape if len(finite_objs) == 1 else Part.makeCompound([o.Shape for o in finite_objs])
 
         return StepLoadResult(
             file_path=path,
