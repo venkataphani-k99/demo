@@ -192,6 +192,61 @@ class DynamicSheetComposer:
 
         return svg_content
 
+    def generate_standard_5view_svg(
+        self,
+        shape: Any,
+        title: str = "PART 2D PROJECTION",
+        subtitle: str = "STANDARD 5-VIEW ORTHOGRAPHIC PROJECTION",
+        output_path: Optional[Path] = None,
+    ) -> str:
+        """Compose clean, high-speed Standard 5-View Orthographic ProjGroup matching FreeCAD TechDraw."""
+        solid, bbox = self.get_finite_shape_and_bbox(shape)
+        width_x = max(float(bbox.XLength), 1.0)
+        depth_y = max(float(bbox.YLength), 1.0)
+        height_z = max(float(bbox.ZLength), 1.0)
+        cx = float(bbox.Center.x)
+        cy = float(bbox.Center.y)
+        cz = float(bbox.Center.z)
+
+        top_segs = self._project_edges(solid, "TOP", cx, cy, cz)
+        front_segs = self._project_edges(solid, "FRONT", cx, cy, cz)
+        side_segs = self._project_edges(solid, "SIDE", cx, cy, cz)
+        bottom_segs = self._project_edges(solid, "BOTTOM", cx, cy, cz)
+
+        canvas_w, canvas_h = 1320.0, 920.0
+        svg: List[str] = []
+        svg.append(
+            f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {canvas_w} {canvas_h}" '
+            f'width="100%" height="100%" style="background-color:#ffffff; font-family:Inter,Roboto,Consolas,monospace;">\n'
+        )
+        svg.append(self._render_iso_border(canvas_w, canvas_h))
+
+        # Scale for 5-view cross layout
+        max_v_w, max_v_h = 290.0, 200.0
+        scale = min(max_v_w / max(width_x, depth_y, 1.0), max_v_h / max(depth_y, height_z, 1.0)) * 0.92
+
+        # 5-View ProjGroup Cross Coordinates (Matching FreeCAD 1.1.3 ProjGroup Layout):
+        # Center = Front View (660, 460)
+        # Top = Top View (660, 190)
+        # Bottom = Bottom View (660, 730)
+        # Left = Left Side View (240, 460)
+        # Right = Right Side View (1080, 460)
+        front_cx, front_cy = 660.0, 460.0
+        top_cx, top_cy = 660.0, 190.0
+        bottom_cx, bottom_cy = 660.0, 730.0
+        left_cx, left_cy = 240.0, 460.0
+        right_cx, right_cy = 1080.0, 460.0
+
+        # Render each clean orthographic projection view
+        svg.append(self._render_pure_view(front_segs, front_cx, front_cy, scale, width_x, height_z, "FRONT VIEW"))
+        svg.append(self._render_pure_view(top_segs, top_cx, top_cy, scale, width_x, depth_y, "TOP VIEW"))
+        svg.append(self._render_pure_view(bottom_segs, bottom_cx, bottom_cy, scale, width_x, depth_y, "BOTTOM VIEW"))
+        svg.append(self._render_pure_view(side_segs, left_cx, left_cy, scale, depth_y, height_z, "LEFT SIDE VIEW"))
+        svg.append(self._render_pure_view(side_segs, right_cx, right_cy, scale, depth_y, height_z, "RIGHT SIDE VIEW"))
+
+        # Title Block & Projection Symbol
+        svg.append(self._render_standard_title_block(950, 770, 320, 115, title, subtitle))
+
         svg.append("</svg>")
         svg_content = "".join(svg)
 
@@ -199,6 +254,52 @@ class DynamicSheetComposer:
             output_path = Path(output_path)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(svg_content, encoding="utf-8")
+
+        return svg_content
+
+    def _render_standard_title_block(
+        self,
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        title: str,
+        subtitle: str,
+    ) -> str:
+        res = [f'<g id="standard-title-block">\n']
+        res.append(f'  <rect x="{x}" y="{y}" width="{w}" height="{h}" fill="#ffffff" stroke="#0f172a" stroke-width="1.6"/>\n')
+        res.append(f'  <rect x="{x}" y="{y}" width="{w}" height="28" fill="#f8fafc" stroke="#0f172a" stroke-width="1.2"/>\n')
+        res.append(f'  <text x="{x + 12}" y="{y + 19}" font-size="11" font-weight="900" fill="#0f172a" letter-spacing="1">{title.upper()}</text>\n')
+        res.append(self._render_projection_symbol(x + w - 40, y + 14))
+
+        res.append(f'  <line x1="{x}" y1="{y + 65}" x2="{x + w}" y2="{y + 65}" stroke="#cbd5e1" stroke-width="0.8"/>\n')
+        res.append(f'  <text x="{x + 12}" y="{y + 45}" font-size="8.5" font-weight="700" fill="#475569">PROJECTION: THIRD ANGLE (ISO 128 / ASME Y14.5)</text>\n')
+        res.append(f'  <text x="{x + 12}" y="{y + 57}" font-size="8.5" font-weight="700" fill="#475569">STANDARD: 5-VIEW ORTHOGRAPHIC PROJECTION</text>\n')
+        res.append(f'  <text x="{x + 12}" y="{y + 82}" font-size="8.5" font-weight="700" fill="#475569">TOLERANCE: ± 0.2 mm (ISO 2768-m)</text>\n')
+        res.append(f'  <text x="{x + 12}" y="{y + 98}" font-size="8.5" font-weight="700" fill="#475569">ALL DIMENSIONS IN MILLIMETERS (mm)</text>\n')
+        res.append('</g>\n')
+        return "".join(res)
+
+    def _render_pure_view(
+        self,
+        segs: List[List[float]],
+        cx: float,
+        cy: float,
+        scale: float,
+        w: float,
+        h: float,
+        label: str,
+    ) -> str:
+        res = [f'<g class="drawing-view">\n']
+        res.append(f'  <text x="{cx}" y="{cy + (h * scale) / 2.0 + 26}" text-anchor="middle" font-size="11" font-weight="900" fill="#0f172a" letter-spacing="1.0">{label}</text>\n')
+        # Centerlines
+        res.append(f'  <line x1="{cx}" y1="{cy - (h * scale) / 2.0 - 15}" x2="{cx}" y2="{cy + (h * scale) / 2.0 + 15}" stroke="#0284c7" stroke-width="0.8" stroke-dasharray="10,3,2,3"/>\n')
+        res.append(f'  <line x1="{cx - (w * scale) / 2.0 - 15}" y1="{cy}" x2="{cx + (w * scale) / 2.0 + 15}" y2="{cy}" stroke="#0284c7" stroke-width="0.8" stroke-dasharray="10,3,2,3"/>\n')
+        if segs:
+            d_str = " ".join(f"M {cx + s[0]*scale:.1f} {cy - s[1]*scale:.1f} L {cx + s[2]*scale:.1f} {cy - s[3]*scale:.1f}" for s in segs)
+            res.append(f'  <path d="{d_str}" fill="none" stroke="#0f172a" stroke-width="1.2" stroke-linecap="round"/>\n')
+        res.append('</g>\n')
+        return "".join(res)
 
         return svg_content
 
@@ -899,7 +1000,8 @@ def main():
     parser = argparse.ArgumentParser(description="Generate CATIA-Grade Universal Technical Drawing SVG")
     parser.add_argument("step_file", type=str, help="Path to input STEP CAD model")
     parser.add_argument("--title", type=str, default="CAD COMPONENT", help="Sheet title")
-    parser.add_argument("--subtitle", type=str, default="SECTION CUT & TECHNICAL SPECIFICATIONS", help="Sheet subtitle")
+    parser.add_argument("--subtitle", type=str, default="TECHNICAL SPECIFICATIONS", help="Sheet subtitle")
+    parser.add_argument("--mode", type=str, default="industrial", choices=["industrial", "standard_5view"], help="Drawing mode")
     parser.add_argument("--output", type=str, required=True, help="Path to output SVG file")
 
     args = parser.parse_args()
@@ -910,14 +1012,22 @@ def main():
 
     res = load_step(step_path)
     composer = DynamicSheetComposer()
-    composer.generate_sheet_svg(
-        shape=res,
-        title=args.title,
-        subtitle=args.subtitle,
-        output_path=Path(args.output),
-    )
+    if args.mode == "standard_5view":
+        composer.generate_standard_5view_svg(
+            shape=res.primary_shape or res.shape,
+            title=args.title,
+            subtitle=args.subtitle,
+            output_path=Path(args.output),
+        )
+    else:
+        composer.generate_sheet_svg(
+            shape=res,
+            title=args.title,
+            subtitle=args.subtitle,
+            output_path=Path(args.output),
+        )
     res.close()
-    print(f"SUCCESS: Exported CATIA-grade technical drawing to {args.output}")
+    print(f"SUCCESS: Exported {args.mode} technical drawing to {args.output}")
 
 
 if __name__ == "__main__":

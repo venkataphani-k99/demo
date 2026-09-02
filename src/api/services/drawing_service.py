@@ -52,19 +52,21 @@ class DrawingService:
                 dxf_path = pdir / f"{base_name}_drawing.dxf"
 
                 if not svg_path.exists():
-                    proj_arg = "third" if "third" in projection.lower() else "first"
+                    from src.cad.freecad_env import get_freecad_python
+                    py_exe = get_freecad_python()
+                    title = base_name.replace("_", " ")
+
                     cmd = [
-                        FREECAD_PYTHON,
-                        "-m", "src.main",
-                        "draw",
+                        py_exe,
+                        "-m", "src.cad.industrial_sheet_composer",
                         str(step_file),
-                        "--output-dir", str(pdir),
-                        "--projection", proj_arg,
-                        "--scale", str(scale),
+                        "--title", title,
+                        "--mode", "standard_5view",
+                        "--output", str(svg_path),
                     ]
                     res = subprocess.run(cmd, capture_output=True, text=True, cwd=str(PROJECT_ROOT))
                     if res.returncode != 0:
-                        raise RuntimeError(f"Drawing generation failed: {res.stderr or res.stdout}")
+                        raise RuntimeError(f"Standard 5-view drawing generation failed: {res.stderr or res.stdout}")
 
                 artifacts = []
                 if fcstd_path.exists():

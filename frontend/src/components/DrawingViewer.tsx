@@ -39,10 +39,7 @@ export const DrawingViewer: React.FC<DrawingViewerProps> = ({
     (a) => a.artifact_type?.toLowerCase() === 'fcstd' || a.file_format === 'fcstd' || a.filename?.endsWith('.fcstd')
   );
 
-  const standardSvgUrl = svgArtifact
-    ? api.getArtifactDownloadUrl(projectId, svgArtifact.artifact_id)
-    : `${api.getBaseUrl()}/api/v1/projects/${projectId}/artifacts/drawing_svg`;
-
+  const standardSvgUrl = `${api.getBaseUrl()}/api/v1/projects/${projectId}/artifacts/drawing_svg`;
   const activeSvgUrl = viewMode === 'industrial' ? industrialUrl : standardSvgUrl;
   const dxfUrl = dxfArtifact
     ? api.getArtifactDownloadUrl(projectId, dxfArtifact.artifact_id)
@@ -55,8 +52,8 @@ export const DrawingViewer: React.FC<DrawingViewerProps> = ({
     setIsGenerating(true);
     setLoadError(null);
     try {
-      // 1. Fetch active SVG from endpoint
-      const res = await fetch(activeSvgUrl);
+      const url = `${activeSvgUrl}?t=${Date.now()}`;
+      const res = await fetch(url);
       if (res.ok) {
         const text = await res.text();
         if (text.includes('<svg')) {
@@ -67,35 +64,7 @@ export const DrawingViewer: React.FC<DrawingViewerProps> = ({
           return;
         }
       }
-
-      // 2. If industrial mode fallback or standard mode generation
-      if (viewMode === 'industrial') {
-        const resStd = await fetch(standardSvgUrl);
-        if (resStd.ok) {
-          const text = await resStd.text();
-          if (text.includes('<svg')) {
-            setSvgContent(text);
-            setIsGenerating(false);
-            return;
-          }
-        }
-      }
-
-      const drawRes = await api.generateDrawing(projectId);
-      const newSvgArt = drawRes.artifacts?.find((a) => a.artifact_type?.toLowerCase() === 'svg' || a.filename?.endsWith('.svg'));
-      const newUrl = newSvgArt
-        ? api.getArtifactDownloadUrl(projectId, newSvgArt.artifact_id)
-        : `${api.getBaseUrl()}/api/v1/projects/${projectId}/artifacts/drawing_svg`;
-
-      const res2 = await fetch(newUrl);
-      if (res2.ok) {
-        const text = await res2.text();
-        setSvgContent(text);
-        const dimMatches = (text.match(/class="dim-badge"|marker-start/g) || []).length;
-        setSvgDimCount(dimMatches);
-      } else {
-        setLoadError('Failed to load drawing SVG content from server.');
-      }
+      setLoadError('Failed to load drawing SVG content from server.');
     } catch (err: unknown) {
       setLoadError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -105,7 +74,7 @@ export const DrawingViewer: React.FC<DrawingViewerProps> = ({
 
   useEffect(() => {
     fetchSvgDrawing();
-  }, [projectId, viewMode, svgArtifact?.artifact_id]);
+  }, [projectId, viewMode]);
 
   // Compute provenance counts from dimension data (same source of truth as dashboard)
   const candidateCount = dimensions.length;
@@ -118,7 +87,7 @@ export const DrawingViewer: React.FC<DrawingViewerProps> = ({
     setIsGenerating(true);
     setLoadError(null);
     try {
-      const cacheBustUrl = `${activeSvgUrl}${activeSvgUrl.includes('?') ? '&' : '?'}t=${Date.now()}&force=true`;
+      const cacheBustUrl = `${activeSvgUrl}?t=${Date.now()}&force=true`;
       const res = await fetch(cacheBustUrl);
       if (res.ok) {
         const text = await res.text();
@@ -130,7 +99,7 @@ export const DrawingViewer: React.FC<DrawingViewerProps> = ({
           return;
         }
       }
-      await fetchSvgDrawing();
+      setLoadError('Failed to regenerate drawing SVG.');
     } catch (err: unknown) {
       setLoadError(err instanceof Error ? err.message : String(err));
     } finally {

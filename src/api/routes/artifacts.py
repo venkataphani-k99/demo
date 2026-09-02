@@ -19,18 +19,21 @@ project_service = ProjectService()
 def download_artifact(project_id: str, artifact_id: str, force: bool = False, t: Optional[str] = None):
     """Securely streams the requested artifact file (FCStd, SVG, DXF, JSON, TXT) to the client."""
     try:
-        if artifact_id in ("industrial_drawing_svg", "drawing_svg") and force:
-            from src.api.services.drawing_service import DrawingService
-            ds = DrawingService(project_service)
-            art_path = ds.generate_industrial_sheet(project_id, force=True)
+        from src.api.services.drawing_service import DrawingService
+        ds = DrawingService(project_service)
+
+        if artifact_id == "industrial_drawing_svg":
+            art_path = ds.generate_industrial_sheet(project_id, force=force)
+        elif artifact_id == "drawing_svg" and force:
+            res = ds.generate_standard_drawing(project_id)
+            art_path = project_service.get_artifact_path(project_id, "drawing_svg")
         else:
             try:
                 art_path = project_service.get_artifact_path(project_id, artifact_id)
             except FileNotFoundError:
-                if artifact_id in ("industrial_drawing_svg", "drawing_svg"):
-                    from src.api.services.drawing_service import DrawingService
-                    ds = DrawingService(project_service)
-                    art_path = ds.generate_industrial_sheet(project_id)
+                if artifact_id == "drawing_svg":
+                    res = ds.generate_standard_drawing(project_id)
+                    art_path = project_service.get_artifact_path(project_id, "drawing_svg")
                 else:
                     raise
 
