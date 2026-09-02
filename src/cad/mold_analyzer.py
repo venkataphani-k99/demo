@@ -1013,7 +1013,7 @@ class MoldabilityAnalyzer:
         normals: List[np.ndarray] = []
         try:
             surf_type = self._get_face_surface_type(face)
-            if surf_type == "Plane":
+            if surf_type == "Plane" or len(self._faces_cache) > 2000:
                 cm = face.CenterOfMass if hasattr(face, "CenterOfMass") else FreeCAD.Vector(0, 0, 0)
                 uv = face.Surface.parameter(cm)
                 n = face.normalAt(float(uv[0]), float(uv[1]))

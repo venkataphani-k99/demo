@@ -21,8 +21,16 @@ def extract_mesh_from_shape(
     tolerance: float = 0.2,
 ) -> Dict[str, Any]:
     """Extract 3D triangulated mesh, sharp boundary edges, and complete B-Rep topology."""
-    # 1. Global Tessellation
-    pts, facets = shape.tessellate(tolerance)
+    num_faces = len(shape.Faces)
+    num_edges = len(shape.Edges)
+
+    # Adaptive tolerance for massive industrial assemblies (>2k faces)
+    effective_tolerance = tolerance
+    if num_faces > 2000 or num_edges > 5000:
+        effective_tolerance = max(tolerance, 0.6)
+
+    # 1. Global Tessellation (Single C++ OCCT call)
+    pts, facets = shape.tessellate(effective_tolerance)
     vertices: List[float] = []
     for p in pts:
         vertices.extend([round(float(p.x), 4), round(float(p.y), 4), round(float(p.z), 4)])
@@ -35,11 +43,14 @@ def extract_mesh_from_shape(
     edges_list: List[List[float]] = []
     edges_map: Dict[str, Dict[str, Any]] = {}
 
-    for e_idx, edge in enumerate(shape.Edges, 1):
+    # Limit edge discretization count for massive assemblies to prevent long freezes
+    max_edges_to_discretize = 4000 if num_edges > 10000 else num_edges
+
+    for e_idx, edge in enumerate(shape.Edges[:max_edges_to_discretize], 1):
         edge_id = f"Edge{e_idx}"
         disc_segs: List[List[float]] = []
         try:
-            disc_pts = edge.discretize(Deflection=tolerance)
+            disc_pts = edge.discretize(Deflection=effective_tolerance)
             if len(disc_pts) >= 2:
                 for i in range(len(disc_pts) - 1):
                     p1 = disc_pts[i]
@@ -89,18 +100,21 @@ def extract_mesh_from_shape(
 
     # 3. Extract Per-Face B-Rep mappings with exact Surface Classification
     faces_map: Dict[str, Dict[str, Any]] = {}
+    skip_per_face_tessellation = (num_faces > 2000)
+
     for idx, face in enumerate(shape.Faces, 1):
         face_id = f"Face{idx}"
         f_verts: List[float] = []
         f_idx: List[int] = []
-        try:
-            f_pts, f_facets = face.tessellate(tolerance)
-            for p in f_pts:
-                f_verts.extend([round(float(p.x), 4), round(float(p.y), 4), round(float(p.z), 4)])
-            for f in f_facets:
-                f_idx.extend([int(f[0]), int(f[1]), int(f[2])])
-        except Exception:
-            pass
+        if not skip_per_face_tessellation:
+            try:
+                f_pts, f_facets = face.tessellate(effective_tolerance)
+                for p in f_pts:
+                    f_verts.extend([round(float(p.x), 4), round(float(p.y), 4), round(float(p.z), 4)])
+                for f in f_facets:
+                    f_idx.extend([int(f[0]), int(f[1]), int(f[2])])
+            except Exception:
+                pass
 
         # Center of mass
         try:

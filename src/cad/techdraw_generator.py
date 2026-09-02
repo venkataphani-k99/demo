@@ -447,11 +447,20 @@ class TechDrawGenerator:
         pg.spacingY = self.config.spacing_y
 
         # Always add Front first — it becomes the anchor
+        # For massive assemblies (> 5k edges), adaptively restrict view count to avoid quadratic CPU freeze
+        num_edges = len(self._src_obj.Shape.Edges) if hasattr(self._src_obj, "Shape") else 0
+        views_to_add = self.config.views
+        if num_edges > 5000:
+            views_to_add = [v for v in self.config.views if v in ("Front", "Top", "Isometric")][:2]
+
         front_item = pg.addProjection("Front")
-        for prop in ["HardHidden", "SmoothHidden", "IsoCount", "CoarseView"]:
+        for prop in ["HardHidden", "SmoothHidden", "SmoothVisible", "SeamVisible", "IsoCount", "CoarseView"]:
             try:
                 if prop in ["HardHidden", "SmoothHidden"]:
                     setattr(front_item, prop, False)
+                elif prop in ["SmoothVisible", "SeamVisible"]:
+                    if num_edges > 3000:
+                        setattr(front_item, prop, False)
                 elif prop == "IsoCount":
                     setattr(front_item, prop, 0)
                 elif prop == "CoarseView":
@@ -460,14 +469,17 @@ class TechDrawGenerator:
                 pass
 
         # Add remaining views
-        for view_name in self.config.views:
+        for view_name in views_to_add:
             if view_name == "Front":
                 continue  # already added
             item = pg.addProjection(view_name)
-            for prop in ["HardHidden", "SmoothHidden", "IsoCount", "CoarseView"]:
+            for prop in ["HardHidden", "SmoothHidden", "SmoothVisible", "SeamVisible", "IsoCount", "CoarseView"]:
                 try:
                     if prop in ["HardHidden", "SmoothHidden"]:
                         setattr(item, prop, False)
+                    elif prop in ["SmoothVisible", "SeamVisible"]:
+                        if num_edges > 3000:
+                            setattr(item, prop, False)
                     elif prop == "IsoCount":
                         setattr(item, prop, 0)
                     elif prop == "CoarseView":
