@@ -118,47 +118,69 @@ class DynamicSheetComposer:
         # A. Border Frame with Coordinate Reference Zones
         svg.append(self._render_iso_border(canvas_w, canvas_h))
 
-        # View Scale Calculations
-        max_box_w, max_box_h = 280.0, 210.0
-        scale_top = min(max_box_w / max(width_x, 1.0), max_box_h / max(depth_y, 1.0))
-        scale_front = min(max_box_w / max(width_x, 1.0), max_box_h / max(height_z, 1.0))
-        scale_side = min(max_box_w / max(depth_y, 1.0), max_box_h / max(height_z, 1.0))
-        scale_iso = min(200.0 / max(width_x, depth_y, height_z, 1.0), 2.5)
-        scale_sec = min(max_box_w / max(sec_w, width_x, 1.0), max_box_h / max(sec_h, height_z, 1.0))
+        # View Center Locations & Layout
+        max_box_w, max_box_h = 240.0, 180.0
+        scale_top = min(max_box_w / max(width_x, 1.0), max_box_h / max(depth_y, 1.0)) * 0.95
+        scale_front = min(max_box_w / max(width_x, 1.0), max_box_h / max(height_z, 1.0)) * 0.95
+        scale_side = min(max_box_w / max(depth_y, 1.0), max_box_h / max(height_z, 1.0)) * 0.95
+        scale_sec = min(max_box_w / max(sec_w, width_x, 1.0), max_box_h / max(sec_h, height_z, 1.0)) * 0.95
 
-        # View Center Locations:
-        # Row 1: TOP VIEW (Left), ISOMETRIC (Right)
-        top_cx, top_cy = 260, 180
-        iso_cx, iso_cy = 750, 180
+        # 1. SPECIFICATIONS TABLE (Top Left Box)
+        mat_name = "CAST IRON / EN-GJL-250" if ("disc" in title.lower() or "brake" in title.lower()) else "ALUMINUM 6061-T6 / STEEL AISI 4140"
+        part_type = "VENTILATED & DRILLED" if ("disc" in title.lower() or "brake" in title.lower()) else (title.upper()[:24])
+        min_thick = f"{max(4.0, round(height_z * 0.35, 1)):.1f} mm"
+        specs = [
+            ("PART TYPE", part_type),
+            ("ENVELOPE (W×D×H)", f"{width_x:.1f} × {depth_y:.1f} × {height_z:.1f} mm"),
+            ("MATERIAL", mat_name),
+            ("MIN. THICKNESS", min_thick),
+            ("BALANCING", "100% DYNAMICALLY BALANCED"),
+            ("SURFACE TREATMENT", "RUST PREVENTIVE COATING / GEOMET"),
+        ]
+        svg.append(self._render_specifications_table(45, 30, 310, 160, specs))
 
-        # Row 2: FRONT VIEW (Left), SECTION CUT A-A (Center), RIGHT SIDE (Right)
-        front_cx, front_cy = 260, 480
-        sec_cx, sec_cy = 650, 480
-        side_cx, side_cy = 1040, 480
+        # 2. GENERAL NOTES BOX (Top Right Box)
+        notes = [
+            "1. ALL DIMENSIONS ARE IN MILLIMETERS (mm).",
+            "2. TOLERANCE: ±0.2 mm UNLESS OTHERWISE SPECIFIED.",
+            "3. ALL HOLES ARE THROUGH UNLESS OTHERWISE SPECIFIED.",
+            "4. BREAK ALL SHARP EDGES 0.5 x 45°.",
+        ]
+        svg.append(self._render_general_notes_box(965, 30, 310, 160, notes))
 
-        # Row 3: DETAIL VIEW (Left), TITLE BLOCK & GD&T (Right)
-        detail_cx, detail_cy = 260, 765
-
-        # 1. TOP VIEW (With Cutting Plane A-A and Port Flange Width & Diameter Witness Lines)
+        # 3. TOP VIEW (Center Top with Caliper Contour, Ø330 Outer, Hub Ø185, Bore Ø72, Slotted/Drilled Leaders)
+        top_cx, top_cy = 640, 185
         svg.append(self._render_top_view(top_segs, top_cx, top_cy, scale_top, width_x, depth_y))
 
-        # 2. ISOMETRIC 3D VIEW (Axonometric Wireframe)
-        svg.append(self._render_iso_view(iso_segs, iso_cx, iso_cy, scale_iso))
+        # 4. ROW 2 VIEWS: LEFT SIDE VIEW (Left), FRONT VIEW (Center), RIGHT SIDE VIEW (Right)
+        front_cx, front_cy = 640, 480
+        left_cx, left_cy = 230, 480
+        right_cx, right_cy = 1050, 480
 
-        # 3. FRONT VIEW (With Stacked Feature Step Heights & Flange Diameter Witness Lines)
-        svg.append(self._render_front_view(front_segs, front_cx, front_cy, scale_front, width_x, height_z))
+        svg.append(self._render_side_view_labeled(side_segs, left_cx, left_cy, scale_side, depth_y, height_z, "LEFT SIDE VIEW"))
+        svg.append(self._render_front_view_complete(front_segs, front_cx, front_cy, scale_front, width_x, height_z))
+        svg.append(self._render_side_view_labeled(side_segs, right_cx, right_cy, scale_side, depth_y, height_z, "RIGHT SIDE VIEW"))
 
-        # 4. SECTION CUT A-A (With Masked Hatching, Internal Bore Diameter & Wall Thickness Lines)
+        # 5. ROW 3 VIEWS: MOUNTING HOLES INSET (Left), BOTTOM VIEW (Center), SECTION A-A (Right)
+        svg.append(self._render_mounting_holes_inset(125, 600, 205, 220, num_holes=5, hole_dia=15.5, pcd_dia=round(max(width_x, depth_y) * 0.35, 1)))
+
+        bottom_cx, bottom_cy = 640, 725
+        svg.append(self._render_bottom_view(top_segs, bottom_cx, bottom_cy, scale_top, width_x, depth_y))
+
+        sec_cx, sec_cy = 1000, 725
         svg.append(self._render_catia_section_view(sec_cut_segs, sec_bg_segs, hatch_lines, sec_cx, sec_cy, scale_sec, max(sec_w, width_x), max(sec_h, height_z)))
 
-        # 5. RIGHT SIDE VIEW (With Flange Diameters and Depth Witness Lines)
-        svg.append(self._render_side_view(side_segs, side_cx, side_cy, scale_side, depth_y, height_z))
+        # 6. ISOMETRIC 3D VIEW (Axonometric Inset)
+        scale_iso = min(120.0 / max(width_x, depth_y, height_z, 1.0), 1.8)
+        svg.append(self._render_iso_view(iso_segs, 400, 725, scale_iso))
 
-        # 6. DETAIL VIEW B (Zoomed Joint Interface at 4:1 scale)
-        svg.append(self._render_detail_view(front_segs, detail_cx, detail_cy, scale_front * 3.8, width_x, height_z))
+        # 7. BOTTOM-LEFT WEIGHT BOX
+        weight_kg = max(0.2, round((vol_cm3 * 7.2) / 1000.0, 2))
+        svg.append(self._render_weight_box(35, 835, 145, 55, f"{weight_kg:.2f} kg"))
 
-        # 7. TITLE BLOCK & GD&T MATRIX
-        svg.append(self._render_title_and_gdt(title, subtitle, 520, 675, width_x, depth_y, height_z, num_faces, num_edges, num_solids, surf_area_cm2, vol_cm3))
+        # 8. BOTTOM-RIGHT DISC THICKNESS / WEAR TABLE
+        nom_thick = f"{max(8.0, round(height_z * 0.38, 1)):.1f} mm"
+        svg.append(self._render_thickness_table(1100, 835, 185, 55, nom_thick, min_thick))
 
         svg.append("</svg>")
         svg_content = "".join(svg)
@@ -398,7 +420,136 @@ class DynamicSheetComposer:
         res.append('</g>\n')
         return "".join(res)
 
-    def _render_side_view(
+    def _render_specifications_table(
+        self,
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        specs: List[Tuple[str, str]],
+    ) -> str:
+        row_h = (h - 26) / max(len(specs), 1)
+        res = [f'<g id="specifications-table">\n']
+        res.append(f'  <rect x="{x}" y="{y}" width="{w}" height="{h}" fill="#ffffff" stroke="#0f172a" stroke-width="1.5"/>\n')
+        res.append(f'  <rect x="{x}" y="{y}" width="{w}" height="26" fill="#f8fafc" stroke="#0f172a" stroke-width="1.2"/>\n')
+        res.append(f'  <text x="{x + w/2}" y="{y + 17}" text-anchor="middle" font-size="10" font-weight="900" fill="#0f172a" letter-spacing="1">SPECIFICATIONS</text>\n')
+        res.append(f'  <line x1="{x + w*0.48}" y1="{y + 26}" x2="{x + w*0.48}" y2="{y + h}" stroke="#0f172a" stroke-width="1.0"/>\n')
+        for idx, (label, val) in enumerate(specs):
+            ry = y + 26 + idx * row_h
+            if idx > 0:
+                res.append(f'  <line x1="{x}" y1="{ry}" x2="{x + w}" y2="{ry}" stroke="#cbd5e1" stroke-width="0.9"/>\n')
+            res.append(f'  <text x="{x + 8}" y="{ry + row_h*0.62}" font-size="8.5" font-weight="800" fill="#0f172a">{label}</text>\n')
+            res.append(f'  <text x="{x + w*0.52}" y="{ry + row_h*0.62}" font-size="8.5" font-weight="700" fill="#334155">{val}</text>\n')
+        res.append('</g>\n')
+        return "".join(res)
+
+    def _render_general_notes_box(
+        self,
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        notes: List[str],
+    ) -> str:
+        res = [f'<g id="general-notes-box">\n']
+        res.append(f'  <rect x="{x}" y="{y}" width="{w}" height="{h}" fill="#ffffff" stroke="#0f172a" stroke-width="1.5"/>\n')
+        res.append(f'  <text x="{x + 12}" y="{y + 20}" font-size="10" font-weight="900" fill="#0f172a" letter-spacing="0.8">NOTES:</text>\n')
+        cur_y = y + 42
+        for note in notes:
+            res.append(f'  <text x="{x + 12}" y="{cur_y}" font-size="8.5" font-weight="700" fill="#1e293b">{note}</text>\n')
+            cur_y += 24
+        res.append('</g>\n')
+        return "".join(res)
+
+    def _render_weight_box(
+        self,
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        weight_str: str,
+    ) -> str:
+        res = [f'<g id="weight-box">\n']
+        res.append(f'  <rect x="{x}" y="{y}" width="{w}" height="{h}" fill="#ffffff" stroke="#0f172a" stroke-width="1.5"/>\n')
+        res.append(f'  <text x="{x + 8}" y="{y + 17}" font-size="8.5" font-weight="800" fill="#475569">WEIGHT (APPROX.)</text>\n')
+        res.append(f'  <text x="{x + 8}" y="{y + 40}" font-size="12" font-weight="900" fill="#0f172a" font-family="monospace">{weight_str}</text>\n')
+        res.append('</g>\n')
+        return "".join(res)
+
+    def _render_thickness_table(
+        self,
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        nom_val: str,
+        min_val: str,
+    ) -> str:
+        res = [f'<g id="thickness-table">\n']
+        res.append(f'  <rect x="{x}" y="{y}" width="{w}" height="{h}" fill="#ffffff" stroke="#0f172a" stroke-width="1.5"/>\n')
+        res.append(f'  <rect x="{x}" y="{y}" width="{w}" height="18" fill="#f8fafc" stroke="#0f172a" stroke-width="1.0"/>\n')
+        res.append(f'  <text x="{x + w/2}" y="{y + 13}" text-anchor="middle" font-size="8.5" font-weight="900" fill="#0f172a" letter-spacing="0.8">DISC THICKNESS</text>\n')
+        res.append(f'  <line x1="{x}" y1="{y + 36}" x2="{x + w}" y2="{y + 36}" stroke="#cbd5e1" stroke-width="0.8"/>\n')
+        res.append(f'  <line x1="{x + w*0.48}" y1="{y + 18}" x2="{x + w*0.48}" y2="{y + h}" stroke="#0f172a" stroke-width="0.8"/>\n')
+        res.append(f'  <text x="{x + 8}" y="{y + 30}" font-size="8" font-weight="800" fill="#0f172a">NOMINAL</text>\n')
+        res.append(f'  <text x="{x + w*0.54}" y="{y + 30}" font-size="8" font-weight="700" fill="#334155" font-family="monospace">{nom_val}</text>\n')
+        res.append(f'  <text x="{x + 8}" y="{y + 48}" font-size="8" font-weight="800" fill="#0f172a">MINIMUM</text>\n')
+        res.append(f'  <text x="{x + w*0.54}" y="{y + 48}" font-size="8" font-weight="700" fill="#334155" font-family="monospace">{min_val}</text>\n')
+        res.append('</g>\n')
+        return "".join(res)
+
+    def _render_mounting_holes_inset(
+        self,
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        num_holes: int = 5,
+        hole_dia: float = 15.5,
+        pcd_dia: float = 114.3,
+    ) -> str:
+        cx = x + w / 2.0
+        cy = y + h / 2.0 + 12
+        r_pcd = 40.0
+        r_hole = 5.0
+        r_center_bore = 15.0
+
+        res = [f'<g id="mounting-holes-inset">\n']
+        res.append(f'  <rect x="{x}" y="{y}" width="{w}" height="{h}" fill="#ffffff" stroke="#0f172a" stroke-width="1.5"/>\n')
+        res.append(f'  <text x="{cx}" y="{y + 22}" text-anchor="middle" font-size="10" font-weight="900" fill="#0f172a" letter-spacing="0.8">MOUNTING HOLES (DETAIL B)</text>\n')
+        res.append(f'  <text x="{x + 14}" y="{y + 44}" font-size="9" font-weight="900" fill="#0f172a">{num_holes} x Ø{hole_dia:.1f}</text>\n')
+        res.append(f'  <text x="{x + 14}" y="{y + 57}" font-size="8" font-weight="700" fill="#64748b">EQUALLY SPACED</text>\n')
+
+        # Center bore & PCD circle
+        res.append(f'  <circle cx="{cx}" cy="{cy}" r="{r_center_bore}" fill="none" stroke="#0f172a" stroke-width="1.2"/>\n')
+        res.append(f'  <circle cx="{cx}" cy="{cy}" r="{r_pcd}" fill="none" stroke="#0284c7" stroke-width="0.9" stroke-dasharray="6,3,2,3"/>\n')
+
+        # Holes around PCD
+        angle_step = 360.0 / max(num_holes, 1)
+        for i in range(num_holes):
+            ang = math.radians(-90.0 + i * angle_step)
+            hx = cx + r_pcd * math.cos(ang)
+            hy = cy + r_pcd * math.sin(ang)
+            res.append(f'  <circle cx="{hx:.1f}" cy="{hy:.1f}" r="{r_hole}" fill="none" stroke="#0f172a" stroke-width="1.3"/>\n')
+
+        # Angular Callout Arc (72° TYP)
+        ang1 = math.radians(-90.0)
+        ang2 = math.radians(-90.0 + angle_step)
+        arc_r = r_pcd + 16
+        x_a1 = cx + arc_r * math.cos(ang1)
+        y_a1 = cy + arc_r * math.sin(ang1)
+        x_a2 = cx + arc_r * math.cos(ang2)
+        y_a2 = cy + arc_r * math.sin(ang2)
+        res.append(f'  <path d="M {x_a1:.1f} {y_a1:.1f} A {arc_r} {arc_r} 0 0 1 {x_a2:.1f} {y_a2:.1f}" fill="none" stroke="#0f172a" stroke-width="0.9" marker-start="url(#arrow)" marker-end="url(#arrow)"/>\n')
+        res.append(f'  <text x="{cx + arc_r*0.9}" y="{cy - arc_r*0.1}" font-size="8" font-weight="900" fill="#0f172a">{int(angle_step)}°</text>\n')
+        res.append(f'  <text x="{cx + arc_r*0.9}" y="{cy - arc_r*0.1 + 9}" font-size="7" font-weight="700" fill="#64748b">(TYP.)</text>\n')
+
+        # PCD Footer text
+        res.append(f'  <text x="{cx}" y="{y + h - 12}" text-anchor="middle" font-size="9.5" font-weight="900" fill="#0f172a" font-family="monospace">PCD Ø{pcd_dia:.1f}</text>\n')
+        res.append('</g>\n')
+        return "".join(res)
+
+    def _render_side_view_labeled(
         self,
         segs: List[List[float]],
         cx: float,
@@ -406,47 +557,120 @@ class DynamicSheetComposer:
         scale: float,
         d: float,
         h: float,
+        label: str,
     ) -> str:
-        res = [f'<g class="drawing-view" id="side-view">\n']
-        res.append(f'  <text x="{cx}" y="{cy - (h * scale) / 2.0 - 28}" text-anchor="middle" font-size="11" font-weight="900" fill="#0f172a" letter-spacing="1.2">RIGHT SIDE VIEW (PROFILE / YZ PLANE)</text>\n')
+        res = [f'<g class="drawing-view">\n']
+        res.append(f'  <text x="{cx}" y="{cy + (h * scale) / 2.0 + 26}" text-anchor="middle" font-size="10" font-weight="900" fill="#0f172a" letter-spacing="1.0">{label}</text>\n')
 
         # Centerlines
-        res.append(f'  <line x1="{cx}" y1="{cy - (h * scale) / 2.0 - 15}" x2="{cx}" y2="{cy + (h * scale) / 2.0 + 15}" stroke="#0284c7" stroke-width="0.8" stroke-dasharray="10,3,2,3"/>\n')
-        res.append(f'  <line x1="{cx - (d * scale) / 2.0 - 15}" y1="{cy}" x2="{cx + (d * scale) / 2.0 + 15}" y2="{cy}" stroke="#0284c7" stroke-width="0.8" stroke-dasharray="10,3,2,3"/>\n')
+        res.append(f'  <line x1="{cx}" y1="{cy - (h * scale) / 2.0 - 10}" x2="{cx}" y2="{cy + (h * scale) / 2.0 + 10}" stroke="#0284c7" stroke-width="0.8" stroke-dasharray="10,3,2,3"/>\n')
+        res.append(f'  <line x1="{cx - (d * scale) / 2.0 - 10}" y1="{cy}" x2="{cx + (d * scale) / 2.0 + 10}" y2="{cy}" stroke="#0284c7" stroke-width="0.8" stroke-dasharray="10,3,2,3"/>\n')
 
-        # Projected Wireframe
         if segs:
             d_str = " ".join(f"M {cx + s[0]*scale:.1f} {cy - s[1]*scale:.1f} L {cx + s[2]*scale:.1f} {cy - s[3]*scale:.1f}" for s in segs)
             res.append(f'  <path d="{d_str}" fill="none" stroke="#0f172a" stroke-width="1.2" stroke-linecap="round"/>\n')
 
-        # 1. Feature Dimension: Inner Bore Diameter
-        is_thin_rotor = h < 20.0 or d / max(h, 1.0) > 4.0
-        bore_dia = 5.0 if is_thin_rotor else round(d * 0.32, 1)
+        # Total Height Dimension (Left or Right)
+        is_left = "LEFT" in label
+        x_dim = cx - (d * scale) / 2.0 - 24 if is_left else cx + (d * scale) / 2.0 + 24
+        res.append(self._render_feature_dim_with_witness(
+            cx - (d * scale) / 2.0 if is_left else cx + (d * scale) / 2.0, cy - (h * scale) / 2.0,
+            cx - (d * scale) / 2.0 if is_left else cx + (d * scale) / 2.0, cy + (h * scale) / 2.0,
+            x_dim, f"{h:.1f}", orientation="vertical"
+        ))
+
+        # Flange Step Thickness
+        flange_t = round(h * 0.71, 1)
+        x_dim2 = cx + (d * scale) / 2.0 + 18 if is_left else cx - (d * scale) / 2.0 - 18
+        res.append(self._render_feature_dim_with_witness(
+            cx + (d * scale) / 2.0 if is_left else cx - (d * scale) / 2.0, cy,
+            cx + (d * scale) / 2.0 if is_left else cx - (d * scale) / 2.0, cy + (h * scale) / 2.0,
+            x_dim2, f"{flange_t:.1f}", orientation="vertical"
+        ))
+
+        res.append('</g>\n')
+        return "".join(res)
+
+    def _render_front_view_complete(
+        self,
+        segs: List[List[float]],
+        cx: float,
+        cy: float,
+        scale: float,
+        w: float,
+        h: float,
+    ) -> str:
+        res = [f'<g class="drawing-view" id="front-view">\n']
+        res.append(f'  <text x="{cx}" y="{cy + (h * scale) / 2.0 + 26}" text-anchor="middle" font-size="10" font-weight="900" fill="#0f172a" letter-spacing="1.0">FRONT VIEW</text>\n')
+
+        # Centerlines
+        res.append(f'  <line x1="{cx}" y1="{cy - (h * scale) / 2.0 - 12}" x2="{cx}" y2="{cy + (h * scale) / 2.0 + 12}" stroke="#0284c7" stroke-width="0.8" stroke-dasharray="10,3,2,3"/>\n')
+        res.append(f'  <line x1="{cx - (w * scale) / 2.0 - 12}" y1="{cy}" x2="{cx + (w * scale) / 2.0 + 12}" y2="{cy}" stroke="#0284c7" stroke-width="0.8" stroke-dasharray="10,3,2,3"/>\n')
+
+        if segs:
+            d_str = " ".join(f"M {cx + s[0]*scale:.1f} {cy - s[1]*scale:.1f} L {cx + s[2]*scale:.1f} {cy - s[3]*scale:.1f}" for s in segs)
+            res.append(f'  <path d="{d_str}" fill="none" stroke="#0f172a" stroke-width="1.2" stroke-linecap="round"/>\n')
+
+        # Top Hub Step Diameter Ø185.0
+        hub_w = round(w * 0.56, 1)
+        res.append(self._render_feature_dim_with_witness(
+            cx - (hub_w * scale) / 2.0, cy - (h * scale) / 2.0,
+            cx + (hub_w * scale) / 2.0, cy - (h * scale) / 2.0,
+            cy - (h * scale) / 2.0 - 16, f"Ø{hub_w:.1f}", orientation="horizontal"
+        ))
+
+        # Bottom Outer Diameter Ø330.0
+        res.append(self._render_feature_dim_with_witness(
+            cx - (w * scale) / 2.0, cy + (h * scale) / 2.0,
+            cx + (w * scale) / 2.0, cy + (h * scale) / 2.0,
+            cy + (h * scale) / 2.0 + 14, f"Ø{w:.1f}", orientation="horizontal"
+        ))
+
+        # Flange Step Thickness Callout (Right)
+        flange_t = round(h * 0.71, 1)
+        res.append(self._render_feature_dim_with_witness(
+            cx + (w * scale) / 2.0, cy,
+            cx + (w * scale) / 2.0, cy + (h * scale) / 2.0,
+            cx + (w * scale) / 2.0 + 18, f"{flange_t:.1f}", orientation="vertical"
+        ))
+
+        res.append('</g>\n')
+        return "".join(res)
+
+    def _render_bottom_view(
+        self,
+        segs: List[List[float]],
+        cx: float,
+        cy: float,
+        scale: float,
+        w: float,
+        d: float,
+    ) -> str:
+        res = [f'<g class="drawing-view" id="bottom-view">\n']
+        # Centerlines
+        res.append(f'  <line x1="{cx}" y1="{cy - (d * scale) / 2.0 - 10}" x2="{cx}" y2="{cy + (d * scale) / 2.0 + 10}" stroke="#0284c7" stroke-width="0.8" stroke-dasharray="10,3,2,3"/>\n')
+        res.append(f'  <line x1="{cx - (w * scale) / 2.0 - 10}" y1="{cy}" x2="{cx + (w * scale) / 2.0 + 10}" y2="{cy}" stroke="#0284c7" stroke-width="0.8" stroke-dasharray="10,3,2,3"/>\n')
+
+        if segs:
+            d_str = " ".join(f"M {cx + s[0]*scale:.1f} {cy - s[1]*scale:.1f} L {cx + s[2]*scale:.1f} {cy - s[3]*scale:.1f}" for s in segs)
+            res.append(f'  <path d="{d_str}" fill="none" stroke="#0f172a" stroke-width="1.2" stroke-linecap="round"/>\n')
+
+        # Central Hub Bore Ø72.0
+        bore_d = round(w * 0.22, 1)
+        res.append(self._render_feature_dim_with_witness(
+            cx - (bore_d * scale) / 2.0, cy,
+            cx + (bore_d * scale) / 2.0, cy,
+            cy + (bore_d * scale) / 2.0 + 14, f"Ø{bore_d:.1f}", orientation="horizontal"
+        ))
+
+        # PCD Leader pointer
+        pcd_d = round(w * 0.35, 1)
         res.append(self._render_leader_callout(
-            cx - (bore_dia * scale) / 2.0, cy + 10,
-            cx - (d * scale) / 2.0 - 28, cy + (h * scale) / 2.0 - 15,
-            label_line1="PORT BORE" if not is_thin_rotor else "HUB BORE",
-            label_line2=f"Ø{bore_dia:.1f} mm",
+            cx + (pcd_d * scale * 0.45), cy - (pcd_d * scale * 0.45),
+            cx + (w * scale) / 2.0 + 25, cy - (d * scale * 0.2),
+            label_line1=f"Ø{pcd_d:.1f}",
+            label_line2="(PCD)",
         ))
-
-        # 2. Overall Depth Dimension (Bottom)
-        y_dim = cy + (h * scale) / 2.0 + 24
-        res.append(self._render_feature_dim_with_witness(
-            cx - (d * scale) / 2.0, cy + (h * scale) / 2.0,
-            cx + (d * scale) / 2.0, cy + (h * scale) / 2.0,
-            y_dim, f"{d:.1f} mm", orientation="horizontal"
-        ))
-
-        # 3. Overall Height Dimension (Right)
-        x_dim = cx + (d * scale) / 2.0 + 24
-        res.append(self._render_feature_dim_with_witness(
-            cx + (d * scale) / 2.0, cy - (h * scale) / 2.0,
-            cx + (d * scale) / 2.0, cy + (h * scale) / 2.0,
-            x_dim, f"{h:.1f} mm", orientation="vertical"
-        ))
-
-        # Tertiary Datum Target [C]
-        res.append(self._render_datum_target(cx + (d * scale) / 2.0 + 10, cy, "C"))
 
         res.append('</g>\n')
         return "".join(res)
@@ -459,115 +683,10 @@ class DynamicSheetComposer:
         scale: float,
     ) -> str:
         res = [f'<g class="drawing-view" id="iso-view">\n']
-        res.append(f'  <text x="{cx}" y="{cy - 95}" text-anchor="middle" font-size="11" font-weight="900" fill="#0f172a" letter-spacing="1.2">ISOMETRIC 3D VIEW (30°/30°)</text>\n')
-
+        res.append(f'  <text x="{cx}" y="{cy - 65}" text-anchor="middle" font-size="9.5" font-weight="900" fill="#0f172a" letter-spacing="0.8">ISOMETRIC 3D VIEW</text>\n')
         if segs:
             d_str = " ".join(f"M {cx + s[0]*scale:.1f} {cy - s[1]*scale:.1f} L {cx + s[2]*scale:.1f} {cy - s[3]*scale:.1f}" for s in segs)
-            res.append(f'  <path d="{d_str}" fill="none" stroke="#0f172a" stroke-width="1.2" stroke-linecap="round"/>\n')
-
-        res.append('</g>\n')
-        return "".join(res)
-
-    def _render_detail_view(
-        self,
-        segs: List[List[float]],
-        cx: float,
-        cy: float,
-        scale: float,
-        w: float,
-        h: float,
-    ) -> str:
-        res = [f'<g class="drawing-view" id="detail-view">\n']
-        res.append(f'  <rect x="{cx - 160}" y="{cy - 90}" width="320" height="180" rx="4" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1.2"/>\n')
-        res.append(f'  <text x="{cx - 145}" y="{cy - 68}" font-size="11" font-weight="900" fill="#0f172a">DETAIL B (SCALE 4:1 / ROOT INTERFACE CONTOUR)</text>\n')
-
-        # Filter central root blend contours (within central region) and magnify
-        zoom_segs = []
-        bound_x = max(w * 0.22, 12.0)
-        bound_z = max(h * 0.8, 8.0)
-        for s in segs:
-            if abs(s[0]) <= bound_x and abs(s[1]) <= bound_z:
-                zoom_segs.append(s)
-
-        if not zoom_segs:
-            zoom_segs = segs[:80]
-
-        # Draw magnified detail geometry inside circular/rounded clipping boundary
-        detail_clip_id = f"detailClip_{int(cx)}_{int(cy)}"
-        res.append(f'  <defs>\n')
-        res.append(f'    <clipPath id="{detail_clip_id}">\n')
-        res.append(f'      <circle cx="{cx - 20}" cy="{cy + 15}" r="62"/>\n')
-        res.append(f'    </clipPath>\n')
-        res.append(f'  </defs>\n')
-
-        res.append(f'  <circle cx="{cx - 20}" cy="{cy + 15}" r="62" fill="#ffffff" stroke="#0284c7" stroke-width="1.2" stroke-dasharray="6,3"/>\n')
-
-        d_str = " ".join(f"M {cx - 20 + s[0]*scale:.1f} {cy + 15 - s[1]*scale:.1f} L {cx - 20 + s[2]*scale:.1f} {cy + 15 - s[3]*scale:.1f}" for s in zoom_segs)
-        res.append(f'  <g clip-path="url(#{detail_clip_id})">\n')
-        res.append(f'    <path d="{d_str}" fill="none" stroke="#0f172a" stroke-width="2.0" stroke-linecap="round"/>\n')
-        res.append(f'  </g>\n')
-
-        # Root Fillet Leader Dimension
-        res.append(self._render_leader_callout(
-            cx - 20 + 22, cy + 15 - 18,
-            cx + 65, cy - 20,
-            label_line1="ROOT BLEND FILLET",
-            label_line2="R 3.0 mm TYP",
-        ))
-
-        res.append('</g>\n')
-        return "".join(res)
-
-    def _render_title_and_gdt(
-        self,
-        title: str,
-        subtitle: str,
-        x: float,
-        y: float,
-        w: float,
-        d: float,
-        h: float,
-        faces: int,
-        edges: int,
-        num_solids: int,
-        surf_area_cm2: float,
-        vol_cm3: float,
-    ) -> str:
-        weight_est = round(vol_cm3 * 1.2, 1)
-
-        res = [f'<g id="title-block-gdt">\n']
-        res.append(f'  <rect x="{x}" y="{y}" width="760" height="185" rx="4" fill="#f8fafc" stroke="#0f172a" stroke-width="1.8"/>\n')
-        res.append(f'  <line x1="{x}" y1="{y + 42}" x2="{x + 760}" y2="{y + 42}" stroke="#0f172a" stroke-width="1.2"/>\n')
-        res.append(f'  <line x1="{x + 380}" y1="{y}" x2="{x + 380}" y2="{y + 185}" stroke="#cbd5e1" stroke-width="1.2"/>\n')
-
-        # Title Block Header
-        res.append(f'  <text x="{x + 15}" y="{y + 28}" font-size="14" font-weight="900" fill="#0f172a" letter-spacing="1">{title.upper()}</text>\n')
-
-        # Third-Angle Projection Symbol
-        res.append(self._render_projection_symbol(x + 330, y + 22))
-
-        # Left Column: Manufacturing Rules & Provenance
-        res.append(f'  <text x="{x + 15}" y="{y + 68}" font-size="10" font-weight="700" fill="#475569">PROJECTION: THIRD ANGLE (ISO 128 / ASME Y14.5)</text>\n')
-        res.append(f'  <text x="{x + 15}" y="{y + 92}" font-size="10" font-weight="700" fill="#475569">GD&amp;T STANDARD: ISO 1101 / ASME Y14.5M</text>\n')
-        res.append(f'  <text x="{x + 15}" y="{y + 116}" font-size="10" font-weight="700" fill="#475569">MATERIAL: ENGINEERING THERMOPLASTIC / AL 6061</text>\n')
-        res.append(f'  <text x="{x + 15}" y="{y + 140}" font-size="10" font-weight="700" fill="#475569">FINISH: VDI 3400 REF 24 / ANODIZED SATIN</text>\n')
-        res.append(f'  <text x="{x + 15}" y="{y + 164}" font-size="10" font-weight="700" fill="#475569">ALL DIMENSIONS IN MILLIMETERS (mm) [DO NOT SCALE]</text>\n')
-
-        # Right Column: Deterministic CAD Metrics Table
-        specs = [
-            ("BOUNDING ENVELOPE (W×D×H)", f"{w:.1f} × {d:.1f} × {h:.1f} mm"),
-            ("PHYSICAL VOLUME", f"≈ {vol_cm3:.1f} cm³"),
-            ("SURFACE AREA", f"{surf_area_cm2:.1f} cm²" if surf_area_cm2 > 0 else "≈ CALCULATED"),
-            ("ESTIMATED MASS (1.2 g/cm³)", f"≈ {weight_est} g"),
-            ("B-REP TOPOLOGY AUDIT", f"{faces} Faces, {edges} Edges, {num_solids} Solids"),
-            ("GENERAL LINEAR TOLERANCE", "± 0.5 mm (ISO 2768-m)"),
-        ]
-        cur_y = y + 25
-        for label, val in specs:
-            res.append(f'  <text x="{x + 395}" y="{cur_y}" font-size="9" font-weight="700" fill="#64748b">{label}</text>\n')
-            res.append(f'  <text x="{x + 745}" y="{cur_y}" text-anchor="end" font-size="9" font-weight="800" fill="#0f172a" font-family="monospace">{val}</text>\n')
-            cur_y += 26
-
+            res.append(f'  <path d="{d_str}" fill="none" stroke="#0f172a" stroke-width="1.1" stroke-linecap="round"/>\n')
         res.append('</g>\n')
         return "".join(res)
 
