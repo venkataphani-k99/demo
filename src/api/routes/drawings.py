@@ -1,6 +1,7 @@
 """Drawing generation routes."""
 from __future__ import annotations
 
+from typing import Optional
 from fastapi import APIRouter, HTTPException, status
 
 from src.api.schemas import DrawingGenerateRequest, DrawingResponse
@@ -15,14 +16,18 @@ drawing_service = DrawingService()
     response_model=DrawingResponse,
     summary="Generate Standard 5-View TechDraw Orthographic Drawing",
 )
-def generate_standard_drawing(project_id: str, request: DrawingGenerateRequest = DrawingGenerateRequest()):
+def generate_standard_drawing(
+    project_id: str,
+    request: Optional[DrawingGenerateRequest] = None,
+):
     """Generates standard 5-view (Front, Top, Left, Right, Bottom) TechDraw drawing and exports FCStd, SVG, and DXF."""
+    req = request or DrawingGenerateRequest()
     try:
         return drawing_service.generate_standard_drawing(
             project_id=project_id,
-            projection=request.projection,
-            template=request.template,
-            scale=request.scale,
+            projection=req.projection,
+            template=req.template,
+            scale=req.scale,
         )
     except FileNotFoundError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Project '{project_id}' not found")
