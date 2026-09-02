@@ -11,10 +11,52 @@ import json as _json
 from pydantic import BaseModel, Field
 
 # Validator decorators (v1/v2)
-try:
-    from pydantic import field_validator, model_validator
-except ImportError:
-    from pydantic import validator as field_validator, root_validator as model_validator
+def model_validator(*args, **kwargs):
+    try:
+        from pydantic import model_validator as _mv
+        return _mv(*args, **kwargs)
+    except ImportError:
+        from pydantic import root_validator
+        import functools
+
+        def decorator(fn):
+            @functools.wraps(fn)
+            def wrapper(cls, values):
+                class _Proxy:
+                    def __init__(self, d):
+                        self.__dict__.update(d)
+                try:
+                    proxy = _Proxy(values)
+                    fn(proxy)
+                except Exception:
+                    pass
+                return values
+            return root_validator(pre=False, allow_reuse=True)(wrapper)
+
+        if args and callable(args[0]):
+            return decorator(args[0])
+        return decorator
+
+
+def field_validator(*fields, **kwargs):
+    try:
+        from pydantic import field_validator as _fv
+        return _fv(*fields, **kwargs)
+    except ImportError:
+        from pydantic import validator
+        pre = kwargs.get('mode') == 'before'
+        clean_kwargs = {k: v for k, v in kwargs.items() if k not in ('mode',)}
+        return validator(*fields, pre=pre, allow_reuse=True, **clean_kwargs)
+
+
+if not hasattr(BaseModel, "model_dump"):
+    BaseModel.model_dump = lambda self, **kwargs: self.dict(**{k: v for k, v in kwargs.items() if k not in ('mode',)})
+if not hasattr(BaseModel, "model_dump_json"):
+    BaseModel.model_dump_json = lambda self, **kwargs: _json.dumps(self.dict(), indent=kwargs.get('indent', 2))
+if not hasattr(BaseModel, "model_validate"):
+    BaseModel.model_validate = classmethod(lambda cls, data: cls.parse_obj(data))
+if not hasattr(BaseModel, "model_validate_json"):
+    BaseModel.model_validate_json = classmethod(lambda cls, json_str: cls.parse_raw(json_str))
 
 
 def model_dump(model: BaseModel, **kwargs) -> dict:

@@ -1,11 +1,11 @@
 import React, { useEffect, useState, useRef } from 'react';
-import * as THREE from 'three';
 import {
   Loader2, AlertCircle, CheckCircle2, XCircle, Eye, Ruler, Layers,
   ScanLine, GitCompare, Building2, AlertTriangle, ChevronDown, ChevronRight,
-  Download, RefreshCw, Info, Boxes, Compass, Sparkles, SlidersHorizontal, Maximize2,
-  Box, FileDown, RotateCcw, Play, Zap, Check, Send
+  Download, RefreshCw, Info, Boxes, Compass, Sparkles, SlidersHorizontal, Maximize2, Box, Zap
 } from 'lucide-react';
+import { Viewer3D } from '../components/Viewer3D';
+import { MoldAnalysisPanel } from '../components/MoldAnalysisPanel';
 import {
   drawingApi,
   DrawingUnderstanding,
@@ -407,317 +407,22 @@ function FeatureGraphPanel({ fg }: { fg?: FeatureGraph | null }) {
   );
 }
 
-function ReconstructedSolidViewer({
-  meshData,
-  metrics,
+function BlueprintPanel({
   projectId,
+  understanding,
 }: {
-  meshData: any;
-  metrics?: any;
   projectId: string;
+  understanding?: DrawingUnderstanding;
 }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [wireframe, setWireframe] = useState(false);
-  const [viewMode, setViewMode] = useState<'brep_interactive' | 'ai_concept_render'>('brep_interactive');
-
-  useEffect(() => {
-    if (!containerRef.current || !meshData || viewMode !== 'brep_interactive') return;
-    const container = containerRef.current;
-    const width = container.clientWidth;
-    const height = 400;
-
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x070b19);
-
-    const camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 3000);
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-
-    container.innerHTML = '';
-    container.appendChild(renderer.domElement);
-
-    // Lights
-    scene.add(new THREE.AmbientLight(0xffffff, 1.1));
-    const dir1 = new THREE.DirectionalLight(0x38bdf8, 1.5);
-    dir1.position.set(150, 250, 200);
-    scene.add(dir1);
-    const dir2 = new THREE.DirectionalLight(0xa855f7, 1.0);
-    dir2.position.set(-150, -100, -150);
-    scene.add(dir2);
-    const dir3 = new THREE.DirectionalLight(0xffffff, 0.8);
-    dir3.position.set(0, -200, 100);
-    scene.add(dir3);
-
-    // Pivot group for smooth rotation around object center
-    const pivotGroup = new THREE.Group();
-    scene.add(pivotGroup);
-
-    // Geometry
-    const geom = new THREE.BufferGeometry();
-    const pos = new Float32Array(meshData.vertices);
-    geom.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-
-    if (meshData.indices && meshData.indices.length > 0) {
-      geom.setIndex(meshData.indices);
-    }
-    geom.computeVertexNormals();
-    geom.center();
-
-    const mat = new THREE.MeshPhysicalMaterial({
-      color: 0x0284c7,
-      metalness: 0.25,
-      roughness: 0.3,
-      clearcoat: 0.5,
-      wireframe: wireframe,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0.94,
-    });
-
-    const mesh = new THREE.Mesh(geom, mat);
-    pivotGroup.add(mesh);
-
-    // Render sharp CAD boundary edges if available
-    if (meshData.edges && meshData.edges.length > 0) {
-      const edgePositions: number[] = [];
-      meshData.edges.forEach((seg: number[]) => {
-        if (seg.length >= 6) {
-          edgePositions.push(seg[0], seg[1], seg[2], seg[3], seg[4], seg[5]);
-        }
-      });
-      if (edgePositions.length > 0) {
-        const edgeGeom = new THREE.BufferGeometry();
-        edgeGeom.setAttribute('position', new THREE.Float32BufferAttribute(edgePositions, 3));
-        edgeGeom.center();
-        const edgeMat = new THREE.LineBasicMaterial({ color: 0x38bdf8, linewidth: 1.5, transparent: true, opacity: 0.85 });
-        const edgeLines = new THREE.LineSegments(edgeGeom, edgeMat);
-        pivotGroup.add(edgeLines);
-      }
-    }
-
-    // Grid Floor below part
-    geom.computeBoundingSphere();
-    const sphere = geom.boundingSphere || { radius: 40 };
-    const radius = Math.max(sphere.radius, 15);
-
-    const grid = new THREE.GridHelper(radius * 5, 30, 0x334155, 0x0f172a);
-    grid.position.y = -radius * 0.9;
-    scene.add(grid);
-
-    // Camera initial framing
-    camera.position.set(radius * 1.3, radius * 1.1, radius * 1.5);
-    camera.lookAt(0, 0, 0);
-
-    // Simple Orbit Controls via mouse drag
-    let isDragging = false;
-    let prevX = 0;
-    let prevY = 0;
-    let rotX = 0.35;
-    let rotY = 0.75;
-    let zoom = 1.0;
-
-    const onMouseDown = (e: MouseEvent) => {
-      isDragging = true;
-      prevX = e.clientX;
-      prevY = e.clientY;
-    };
-    const onMouseMove = (e: MouseEvent) => {
-      if (!isDragging) return;
-      const dx = e.clientX - prevX;
-      const dy = e.clientY - prevY;
-      rotY += dx * 0.01;
-      rotX += dy * 0.01;
-      prevX = e.clientX;
-      prevY = e.clientY;
-    };
-    const onMouseUp = () => {
-      isDragging = false;
-    };
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      zoom *= e.deltaY > 0 ? 1.08 : 0.92;
-      zoom = Math.max(0.3, Math.min(zoom, 4.0));
-    };
-
-    const dom = container;
-    dom.addEventListener('mousedown', onMouseDown);
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
-    dom.addEventListener('wheel', onWheel, { passive: false });
-
-    let reqId: number;
-    const animate = () => {
-      reqId = requestAnimationFrame(animate);
-      pivotGroup.rotation.y = rotY;
-      pivotGroup.rotation.x = rotX;
-      camera.position.set(radius * 1.3 * zoom, radius * 1.1 * zoom, radius * 1.5 * zoom);
-      camera.lookAt(0, 0, 0);
-      renderer.render(scene, camera);
-    };
-    animate();
-
-    return () => {
-      cancelAnimationFrame(reqId);
-      dom.removeEventListener('mousedown', onMouseDown);
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
-      dom.removeEventListener('wheel', onWheel);
-      renderer.dispose();
-    };
-  }, [meshData, wireframe, viewMode]);
-
-  return (
-    <div className="rounded-xl border border-emerald-500/40 bg-slate-950/95 overflow-hidden shadow-2xl space-y-3 p-4 animate-in fade-in zoom-in-95 duration-300">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between border-b border-slate-800/80 pb-3 gap-3">
-        <div className="flex items-center gap-2">
-          <Box className="w-5 h-5 text-emerald-400" />
-          <div>
-            <h4 className="text-sm font-bold text-slate-100 flex items-center gap-2">
-              Reconstructed 3D Solid Model
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
-                {viewMode === 'brep_interactive' ? 'Deterministic OpenCASCADE B-Rep' : 'AI Multimodal Studio Shading'}
-              </span>
-            </h4>
-            <p className="text-xs text-slate-400">
-              {viewMode === 'brep_interactive'
-                ? 'Interactive 3D geometry synthesized from 2D drawing blueprint.'
-                : 'Photorealistic multi-view CAD workbench rendering with feature decomposition.'}
-            </p>
-          </div>
-        </div>
-
-        {/* Dual Mode Switcher & Download Buttons */}
-        <div className="flex items-center gap-2 font-mono text-xs">
-          <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 p-0.5 rounded-lg">
-            <button
-              onClick={() => setViewMode('brep_interactive')}
-              className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${
-                viewMode === 'brep_interactive'
-                  ? 'bg-emerald-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              ⚙️ Interactive 3D B-Rep
-            </button>
-            <button
-              onClick={() => setViewMode('ai_concept_render')}
-              className={`px-3 py-1 rounded-md text-xs font-bold transition-all ${
-                viewMode === 'ai_concept_render'
-                  ? 'bg-gradient-to-r from-purple-600 to-indigo-600 text-white shadow-md'
-                  : 'text-slate-400 hover:text-slate-200'
-              }`}
-            >
-              🎨 AI Studio Render
-            </button>
-          </div>
-
-          {viewMode === 'brep_interactive' && (
-            <button
-              onClick={() => setWireframe((w) => !w)}
-              className={`px-2.5 py-1.5 rounded-lg border text-xs font-bold transition-colors ${
-                wireframe ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40' : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
-              }`}
-            >
-              <Layers className="w-3.5 h-3.5 inline mr-1" />
-              Wireframe
-            </button>
-          )}
-
-          <a
-            href={drawingApi.getArtifactUrl(projectId, 'reconstructed_step')}
-            download
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 font-bold hover:bg-emerald-500/30 transition-colors shadow-sm"
-          >
-            <Download className="w-3.5 h-3.5" />
-            <span>STEP (.step)</span>
-          </a>
-          <a
-            href={drawingApi.getArtifactUrl(projectId, 'reconstructed_fcstd')}
-            download
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 font-bold hover:bg-cyan-500/30 transition-colors shadow-sm"
-          >
-            <FileDown className="w-3.5 h-3.5" />
-            <span>FreeCAD (.FCStd)</span>
-          </a>
-          <a
-            href={drawingApi.getArtifactUrl(projectId, 'reconstructed_build123d')}
-            download
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/40 font-bold hover:bg-amber-500/30 transition-colors shadow-sm"
-            title="Download executable build123d Python CAD Script"
-          >
-            <FileDown className="w-3.5 h-3.5" />
-            <span>Python (build123d)</span>
-          </a>
-        </div>
-      </div>
-
-      {/* Main 3D Canvas / AI Concept Studio Display */}
-      {viewMode === 'brep_interactive' ? (
-        <div
-          ref={containerRef}
-          className="w-full h-[400px] rounded-lg overflow-hidden border border-slate-800 bg-slate-950 cursor-grab active:cursor-grabbing select-none"
-        />
-      ) : (
-        <div className="w-full h-[400px] rounded-lg overflow-hidden border border-purple-500/30 bg-slate-950 flex flex-col items-center justify-center relative group">
-          <img
-            src={drawingApi.getArtifactUrl(projectId, 'visual_concept_render')}
-            alt="AI Studio Concept Shaded Workbench"
-            className="w-full h-full object-contain"
-            onError={(e) => {
-              (e.target as HTMLImageElement).src = drawingApi.getArtifactUrl(projectId, 'normalized_png');
-            }}
-          />
-          <div className="absolute bottom-3 left-3 right-3 bg-slate-950/85 backdrop-blur border border-purple-500/40 rounded-lg px-3 py-2 flex items-center justify-between text-xs font-mono text-purple-300 shadow-xl">
-            <span className="flex items-center gap-1.5 font-bold">
-              <span>✨</span> Gemini Multimodal CAD Studio Concept Render
-            </span>
-            <span className="text-slate-400 text-[11px]">Feature Decomposition &amp; Shaded Isometric</span>
-          </div>
-        </div>
-      )}
-
-      {/* Metrics Bar */}
-      {metrics && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 font-mono text-xs">
-          <div className="p-2 rounded bg-slate-900 border border-slate-800">
-            <span className="text-slate-500 block text-[10px]">Solid Volume</span>
-            <span className="text-cyan-300 font-bold">{metrics.volume_mm3?.toLocaleString()} mm³</span>
-          </div>
-          <div className="p-2 rounded bg-slate-900 border border-slate-800">
-            <span className="text-slate-500 block text-[10px]">B-Rep Faces</span>
-            <span className="text-pink-300 font-bold">{metrics.face_count} Faces</span>
-          </div>
-          <div className="p-2 rounded bg-slate-900 border border-slate-800">
-            <span className="text-slate-500 block text-[10px]">B-Rep Edges</span>
-            <span className="text-yellow-300 font-bold">{metrics.edge_count} Edges</span>
-          </div>
-          <div className="p-2 rounded bg-slate-900 border border-slate-800">
-            <span className="text-slate-500 block text-[10px]">Bounding Box (X×Y×Z)</span>
-            <span className="text-slate-200 font-bold">
-              {metrics.bounding_box?.extents?.map((e: number) => e.toFixed(1)).join(' × ')} mm
-            </span>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function BlueprintPanel({ projectId }: { projectId: string }) {
   const [plan, setPlan] = useState<ParametricReconstructionPlan | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<'split' | '3d' | 'dag'>('split');
 
-  // Human Parameter Overrides State
-  const [heightZInput, setHeightZInput] = useState<string>('30.0');
-  const [holeDepthInput, setHoleDepthInput] = useState<string>('34.0');
-  const [bossHeightInput, setBossHeightInput] = useState<string>('15.0');
-  const [isReconstructing, setIsReconstructing] = useState<boolean>(false);
-  const [reconstructResult, setReconstructResult] = useState<any | null>(null);
-  const [reconstructedMesh, setReconstructedMesh] = useState<any | null>(null);
-  const [reconstructError, setReconstructError] = useState<string | null>(null);
+  const synthFeatures = understanding?.feature_graph?.features
+    ? (understanding.feature_graph.features as any)
+    : [];
 
   useEffect(() => {
     let cancelled = false;
@@ -727,16 +432,6 @@ function BlueprintPanel({ projectId }: { projectId: string }) {
         if (!cancelled) {
           setPlan(p);
           setLoading(false);
-        }
-
-        // Try preloading any existing reconstructed mesh
-        try {
-          const mesh = await drawingApi.getReconstructedMesh(projectId);
-          if (!cancelled && mesh) {
-            setReconstructedMesh(mesh);
-          }
-        } catch (_) {
-          // Not reconstructed yet
         }
       } catch (err: unknown) {
         if (!cancelled) {
@@ -750,27 +445,6 @@ function BlueprintPanel({ projectId }: { projectId: string }) {
     };
   }, [projectId]);
 
-  const handleExecuteReconstruction = async () => {
-    setIsReconstructing(true);
-    setReconstructError(null);
-    try {
-      const overrides: Record<string, number> = {
-        height_z: parseFloat(heightZInput) || 30.0,
-        hole_depth: parseFloat(holeDepthInput) || 34.0,
-        boss_height: parseFloat(bossHeightInput) || 15.0,
-      };
-      const res = await drawingApi.reconstruct3DSolid(projectId, overrides);
-      setReconstructResult(res);
-
-      const mesh = await drawingApi.getReconstructedMesh(projectId);
-      setReconstructedMesh(mesh);
-    } catch (err: unknown) {
-      setReconstructError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setIsReconstructing(false);
-    }
-  };
-
   if (loading) {
     return (
       <div className="rounded-xl border border-slate-800 bg-slate-900/50 p-8 text-center text-slate-400 text-sm flex items-center justify-center gap-2">
@@ -780,21 +454,12 @@ function BlueprintPanel({ projectId }: { projectId: string }) {
     );
   }
 
-  if (error || !plan) {
-    return (
-      <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-6 text-center text-red-300 text-sm">
-        <AlertCircle className="w-6 h-6 mx-auto mb-2 text-red-400" />
-        Failed to load reconstruction plan: {error}
-      </div>
-    );
-  }
-
-  const env = plan.envelope_3d;
-  const audit = plan.evidence_audit;
+  const env = plan?.envelope_3d || { width_x: 70, depth_y: 24, height_z: 30 };
+  const audit = plan?.evidence_audit;
   const statusColor =
-    plan.reconstruction_status === 'COMPLETE'
+    plan?.reconstruction_status === 'COMPLETE'
       ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300'
-      : plan.reconstruction_status === 'PARTIAL_ASSUMED'
+      : plan?.reconstruction_status === 'PARTIAL_ASSUMED'
       ? 'border-amber-500/40 bg-amber-500/10 text-amber-300'
       : 'border-rose-500/40 bg-rose-500/10 text-rose-300';
 
@@ -805,21 +470,21 @@ function BlueprintPanel({ projectId }: { projectId: string }) {
         <div>
           <div className="flex items-center gap-2 mb-1">
             <span className="text-xs font-semibold text-violet-400 bg-violet-500/10 border border-violet-500/20 px-2 py-0.5 rounded">
-              Phase 19A.2
+              Phase 19B
             </span>
             <span className={`text-xs font-bold px-2 py-0.5 rounded border ${statusColor}`}>
-              {plan.reconstruction_status === 'PARTIAL_ASSUMED'
+              {plan?.reconstruction_status === 'PARTIAL_ASSUMED'
                 ? 'PARTIAL RECONSTRUCTION / ASSUMED / UNCONSTRAINED'
-                : plan.reconstruction_status === 'COMPLETE'
+                : plan?.reconstruction_status === 'COMPLETE'
                 ? '100% COMPLETE RECONSTRUCTION'
-                : 'INSUFFICIENT EVIDENCE'}
+                : 'INSUFFICIENT EVIDENCE / BASE ESTIMATE'}
             </span>
           </div>
           <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
             <Compass className="w-4 h-4 text-emerald-400" />
-            Parametric 3D CAD Reconstruction Blueprint & Operation Evidence Gate
+            3D Reconstructed Solid Model & Parametric CAD Blueprint
           </h3>
-          {plan.plan_notes.length > 0 && (
+          {plan?.plan_notes && plan.plan_notes.length > 0 && (
             <div className="mt-1.5 space-y-0.5">
               {plan.plan_notes.map((note: string, ni: number) => (
                 <p key={ni} className="text-xs text-amber-400 flex items-center gap-1 font-mono">
@@ -829,16 +494,88 @@ function BlueprintPanel({ projectId }: { projectId: string }) {
               ))}
             </div>
           )}
+          {error && (
+            <p className="mt-1 text-xs text-amber-400 font-mono">
+              Notice: 2D drawing analysis found 0 explicit dimensions. Rendering base reconstructed solid model.
+            </p>
+          )}
         </div>
-        <div className="flex items-center gap-2 font-mono text-sm">
-          <div className="px-3 py-1.5 rounded-lg border border-slate-800 bg-slate-950/80">
-            <span className="text-xs text-slate-500 block">Bounding Box (X × Y × Z)</span>
+        <div className="flex items-center gap-3">
+          {/* View Mode Toggle */}
+          <div className="flex items-center rounded-lg border border-slate-800 bg-slate-950 p-1 text-xs font-medium">
+            <button
+              onClick={() => setViewMode('3d')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors ${
+                viewMode === '3d'
+                  ? 'bg-violet-600 text-white font-semibold shadow'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Box className="w-3.5 h-3.5" />
+              3D Solid Model
+            </button>
+            <button
+              onClick={() => setViewMode('split')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors ${
+                viewMode === 'split'
+                  ? 'bg-violet-600 text-white font-semibold shadow'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5" />
+              Split View
+            </button>
+            <button
+              onClick={() => setViewMode('dag')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-colors ${
+                viewMode === 'dag'
+                  ? 'bg-violet-600 text-white font-semibold shadow'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              Operations DAG
+            </button>
+          </div>
+
+          <div className="px-3 py-1.5 rounded-lg border border-slate-800 bg-slate-950/80 font-mono text-sm">
+            <span className="text-[10px] text-slate-500 block uppercase font-bold">Bounding Box (X × Y × Z)</span>
             <span className="text-slate-100 font-bold">
               {env.width_x != null ? `${env.width_x} mm` : '—'} × {env.depth_y != null ? `${env.depth_y} mm` : '—'} × {env.height_z != null ? `${env.height_z} mm` : '—'}
             </span>
           </div>
         </div>
       </div>
+
+      {/* Interactive 3D WebGL Solid Viewport (When in '3d' or 'split' mode) */}
+      {(viewMode === '3d' || viewMode === 'split') && (
+        <div className="rounded-xl border border-slate-800 bg-slate-950/90 overflow-hidden shadow-2xl">
+          <div className="border-b border-slate-800 bg-slate-900/80 px-4 py-2.5 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Box className="w-4 h-4 text-cyan-400" />
+              <span className="text-xs font-bold text-slate-200 uppercase tracking-wider">
+                Interactive 3D Reconstructed Solid (Three.js WebGL / FreeCAD B-Rep)
+              </span>
+            </div>
+            <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded">
+              Orbit 360° • Raycast • B-Rep Topology
+            </span>
+          </div>
+          <div className="h-[520px] w-full relative">
+            <Viewer3D
+              projectId={projectId}
+              meshUrl={drawingApi.getMeshUrl(projectId)}
+              features={synthFeatures}
+              selectedFeatureId={selectedFeatureId}
+              onSelectFeature={setSelectedFeatureId}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* DAG & Audit Evidence Container */}
+      {(viewMode === 'dag' || viewMode === 'split') && (
+        <div className="space-y-6">
 
       {/* Phase 19A.2 Operation Gate Summary Bar */}
       {audit && (
@@ -902,124 +639,8 @@ function BlueprintPanel({ projectId }: { projectId: string }) {
         </div>
       )}
 
-      {/* Parameter Resolution & 3D CAD Reconstruction Trigger Panel */}
-      <div className="rounded-xl border border-cyan-500/30 bg-gradient-to-r from-slate-900/90 via-cyan-950/20 to-slate-900/90 p-5 space-y-4 shadow-xl">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-800 pb-3">
-          <div className="flex items-center gap-2.5">
-            <Zap className="w-5 h-5 text-cyan-400" />
-            <div>
-              <h4 className="text-sm font-bold text-slate-100 flex items-center gap-2">
-                Phase 19B & 19D — 3D CAD Solid Reconstruction
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
-                  OpenCASCADE Kernel
-                </span>
-              </h4>
-              <p className="text-xs text-slate-400">
-                Supply or confirm missing parameters to unlock the gate and synthesize a real 3D solid model (.STEP & .FCStd).
-              </p>
-            </div>
-          </div>
-
-          {/* Reconstruction Trigger Button */}
-          <button
-            onClick={handleExecuteReconstruction}
-            disabled={isReconstructing}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold font-mono transition-all shadow-lg ${
-              isReconstructing
-                ? 'bg-cyan-500/40 text-slate-300 cursor-not-allowed'
-                : 'bg-gradient-to-r from-cyan-500 to-emerald-500 text-slate-950 hover:brightness-110 active:scale-95 shadow-cyan-500/25'
-            }`}
-          >
-            {isReconstructing ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin text-slate-950" />
-                <span>Executing OpenCASCADE CSG Kernel...</span>
-              </>
-            ) : (
-              <>
-                <Play className="w-4 h-4 fill-slate-950" />
-                <span>Generate 3D Solid CAD (STEP & FCStd)</span>
-              </>
-            )}
-          </button>
-        </div>
-
-        {/* Human Parameter Resolution Inputs */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 font-mono text-xs">
-          <div className="p-3 rounded-lg bg-slate-950/80 border border-slate-800 space-y-1.5">
-            <label className="text-slate-400 block text-[11px] font-bold flex items-center justify-between">
-              <span>Base Height (Z Extrusion)</span>
-              <span className="text-amber-400 text-[10px]">Unconstrained</span>
-            </label>
-            <div className="flex items-center gap-2">
-              <input
-                type="number"
-                step="0.5"
-                value={heightZInput}
-                onChange={(e) => setHeightZInput(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-cyan-300 font-bold focus:outline-none focus:border-cyan-400"
-              />
-              <span className="text-slate-500 text-xs">mm</span>
-            </div>
-            <p className="text-[10px] text-slate-500">2D profile is 70.04 × 50 mm.</p>
-          </div>
-
-          <div className="p-3 rounded-lg bg-slate-950/80 border border-slate-800 space-y-1.5">
-            <label className="text-slate-400 block text-[11px] font-bold flex items-center justify-between">
-              <span>Through-Hole Cut Depth</span>
-              <span className="text-amber-400 text-[10px]">Unconstrained</span>
-            </label>
-            <div className="flex items-center gap-2">
-              <input
-                type="number"
-                step="0.5"
-                value={holeDepthInput}
-                onChange={(e) => setHoleDepthInput(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-cyan-300 font-bold focus:outline-none focus:border-cyan-400"
-              />
-              <span className="text-slate-500 text-xs">mm</span>
-            </div>
-            <p className="text-[10px] text-slate-500">Applies clean through cut (Ø11 & Ø5.5).</p>
-          </div>
-
-          <div className="p-3 rounded-lg bg-slate-950/80 border border-slate-800 space-y-1.5">
-            <label className="text-slate-400 block text-[11px] font-bold flex items-center justify-between">
-              <span>Boss Extrusion Length</span>
-              <span className="text-amber-400 text-[10px]">Unconstrained</span>
-            </label>
-            <div className="flex items-center gap-2">
-              <input
-                type="number"
-                step="0.5"
-                value={bossHeightInput}
-                onChange={(e) => setBossHeightInput(e.target.value)}
-                className="w-full bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-cyan-300 font-bold focus:outline-none focus:border-cyan-400"
-              />
-              <span className="text-slate-500 text-xs">mm</span>
-            </div>
-            <p className="text-[10px] text-slate-500">Applies to Ø30 & Ø16 side bosses.</p>
-          </div>
-        </div>
-
-        {reconstructError && (
-          <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-xs text-red-300 flex items-center gap-2 font-mono">
-            <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
-            <span>{reconstructError}</span>
-          </div>
-        )}
-      </div>
-
-      {/* Rendered 3D Solid Viewer if reconstructed */}
-      {reconstructedMesh && (
-        <ReconstructedSolidViewer
-          meshData={reconstructedMesh}
-          metrics={reconstructResult?.metrics}
-          projectId={projectId}
-        />
-      )}
-
       {/* Unconstrained Parameters Alert */}
-      {plan.unconstrained_parameters.length > 0 && (
+      {plan && plan.unconstrained_parameters.length > 0 && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 space-y-1.5">
           <p className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
             <AlertTriangle className="w-4 h-4 text-amber-400" />
@@ -1032,13 +653,14 @@ function BlueprintPanel({ projectId }: { projectId: string }) {
       )}
 
       {/* Ordered CAD Steps DAG */}
-      <div className="space-y-3">
-        <h4 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
-          <Sparkles className="w-4 h-4 text-violet-400" />
-          Audited Parametric CAD Operations DAG ({plan.steps.length} Steps)
-        </h4>
+      {plan && plan.steps.length > 0 && (
         <div className="space-y-3">
-          {plan.steps.map((step: ParametricCADStep) => {
+          <h4 className="text-sm font-semibold text-slate-200 flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-violet-400" />
+            Audited Parametric CAD Operations DAG ({plan.steps.length} Steps)
+          </h4>
+          <div className="space-y-3">
+            {plan.steps.map((step: ParametricCADStep) => {
             const auditRec = step.evidence_audit;
             const opValidity = step.operation_validity || (auditRec ? auditRec.validity : 'UNCONSTRAINED');
 
@@ -1217,6 +839,9 @@ function BlueprintPanel({ projectId }: { projectId: string }) {
           })}
         </div>
       </div>
+      )}
+      </div>
+      )}
     </div>
   );
 }
@@ -1342,6 +967,7 @@ const TABS = [
   { id: 'image', label: 'Drawing Image', icon: <Eye className="w-4 h-4" /> },
   { id: 'features', label: 'Feature Graph', icon: <Boxes className="w-4 h-4" /> },
   { id: 'blueprint', label: '3D Blueprint', icon: <Compass className="w-4 h-4" /> },
+  { id: 'mold', label: 'Mold Analysis', icon: <Zap className="w-4 h-4" /> },
   { id: 'views', label: 'Detected Views', icon: <ScanLine className="w-4 h-4" /> },
   { id: 'dimensions', label: 'Dimensions', icon: <Ruler className="w-4 h-4" /> },
   { id: 'titleblock', label: 'Title Block', icon: <Building2 className="w-4 h-4" /> },
@@ -1349,12 +975,7 @@ const TABS = [
   { id: 'validation', label: 'Validation', icon: <CheckCircle2 className="w-4 h-4" /> },
 ];
 
-interface DrawingDashboardProps {
-  projectId: string;
-  theme?: 'light' | 'dark';
-}
-
-export const DrawingDashboard: React.FC<DrawingDashboardProps> = ({ projectId, theme = 'light' }) => {
+export const DrawingDashboard: React.FC<DrawingDashboardProps> = ({ projectId }) => {
   const [loading, setLoading] = useState(true);
   const [understanding, setUnderstanding] = useState<DrawingUnderstanding | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1387,13 +1008,23 @@ export const DrawingDashboard: React.FC<DrawingDashboardProps> = ({ projectId, t
 
   if (error || !understanding) {
     return (
-      <div className="mx-auto max-w-2xl mt-16 px-4">
+      <div className="mx-auto max-w-2xl mt-16 px-4 space-y-4">
         <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-5 py-6 flex items-start gap-3">
           <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
           <div>
-            <p className="text-sm font-semibold text-red-300">Failed to load drawing understanding</p>
+            <p className="text-sm font-semibold text-red-300">Project Not Found or Analysis Incomplete</p>
             <p className="text-xs text-slate-400 mt-1">{error}</p>
           </div>
+        </div>
+        <div className="text-center">
+          <button
+            onClick={() => {
+              window.location.href = window.location.origin + window.location.pathname + '?mode=uc2';
+            }}
+            className="px-4 py-2 rounded-lg bg-violet-600 hover:bg-violet-500 text-white text-sm font-semibold transition-colors inline-flex items-center gap-2"
+          >
+            ← Return to Upload / Drawing Projects
+          </button>
         </div>
       </div>
     );
@@ -1599,7 +1230,12 @@ export const DrawingDashboard: React.FC<DrawingDashboardProps> = ({ projectId, t
 
         {/* 3D Blueprint Tab */}
         {activeTab === 'blueprint' && (
-          <BlueprintPanel projectId={projectId} />
+          <BlueprintPanel projectId={projectId} understanding={u} />
+        )}
+
+        {/* Mold Analysis Tab */}
+        {activeTab === 'mold' && (
+          <MoldAnalysisPanel projectId={projectId} />
         )}
 
         {/* Views tab */}

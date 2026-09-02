@@ -48,6 +48,21 @@ class DrawingProjectService:
                 except OSError:
                     pass
 
+    def list_projects(self) -> list[Dict[str, Any]]:
+        if not _WORKSPACE_ROOT.exists():
+            return []
+        projects = []
+        for pdir in _WORKSPACE_ROOT.iterdir():
+            if pdir.is_dir():
+                mp = pdir / "drawing_project.json"
+                if mp.exists():
+                    try:
+                        meta = json.loads(mp.read_text(encoding="utf-8"))
+                        projects.append(meta)
+                    except Exception:
+                        pass
+        return sorted(projects, key=lambda x: x.get("created_at", ""), reverse=True)
+
     def create_project(self, filename: str, content: bytes) -> Dict[str, Any]:
         """Create a new UC2 drawing project workspace."""
         project_id = str(uuid.uuid4())
@@ -166,11 +181,7 @@ class DrawingProjectService:
         if not json_path.exists():
             raise FileNotFoundError(f"Understanding file missing on disk: {json_path}")
         data = json.loads(json_path.read_text(encoding="utf-8"))
-        if hasattr(DrawingUnderstanding, "model_validate"):
-            return DrawingUnderstanding.model_validate(data)
-        elif hasattr(DrawingUnderstanding, "parse_obj"):
-            return DrawingUnderstanding.parse_obj(data)
-        return DrawingUnderstanding(**data)
+        return DrawingUnderstanding.model_validate(data)
 
     def get_reconstruction_plan(self, project_id: str) -> Any:
         """Load or generate the Phase 19A/19A.2 ParametricReconstructionPlan and Evidence Audit."""
@@ -181,7 +192,25 @@ class DrawingProjectService:
         meta = self._load_meta(project_id)
         u = self.get_understanding(project_id)
         if not u.feature_graph:
-            raise FileNotFoundError(f"No feature graph available for project '{project_id}'.")
+            try:
+                from src.drawing.feature_synthesizer import FeatureSynthesizer
+                views_list = (u.claude_result.views if u.claude_result else []) or (u.gemini_result.views if u.gemini_result else [])
+                views_map = {v.view_id: v.view_type for v in views_list}
+                dims = u.all_dimensions_combined
+                all_entities = (u.claude_result.entities if u.claude_result else []) + (u.gemini_result.entities if u.gemini_result else [])
+                c_dims = u.claude_result.dimensions if u.claude_result else []
+                g_dims = u.gemini_result.dimensions if u.gemini_result else []
+                u.feature_graph = FeatureSynthesizer().synthesize(
+                    dims,
+                    views_map,
+                    entities=all_entities,
+                    claude_dims=c_dims,
+                    gemini_dims=g_dims,
+                )
+                self.save_understanding(project_id, u)
+            except Exception:
+                from src.drawing.schemas import FeatureGraph
+                u.feature_graph = FeatureGraph(features=[])
 
         planner = ReconstructionPlanner()
         plan = planner.plan(project_id, u.feature_graph)
@@ -219,117 +248,19 @@ class DrawingProjectService:
             "file_path": str(report_path),
             "artifact_type": "evidence_report_markdown",
         }
+
+        if getattr(plan, "debug_trace", None):
+            trace_path = pdir / f"{stem}_reconstruction_debug_trace.json"
+            trace_path.write_text(plan.debug_trace.model_dump_json(indent=2), encoding="utf-8")
+            meta["artifacts"]["reconstruction_debug_trace"] = {
+                "artifact_id": "reconstruction_debug_trace",
+                "filename": trace_path.name,
+                "file_path": str(trace_path),
+                "artifact_type": "debug_trace_json",
+            }
+
         self._save_meta(project_id, meta)
         return plan
-
-    def reconstruct_3d_solid(
-        self,
-        project_id: str,
-        parameter_overrides: Optional[Dict[str, float]] = None,
-    ) -> Dict[str, Any]:
-        meta = self._load_meta(project_id)
-        plan = self.get_reconstruction_plan(project_id)
-        plan_dict = plan.model_dump()
-
-        pdir = self._project_dir(project_id)
-        stem = Path(meta["filename"]).stem
-        plan_path = pdir / f"{stem}_reconstruction_plan.json"
-
-        # Execute CAD builder in FreeCAD-compatible Python subprocess to guarantee zero DLL conflict
-        import subprocess
-        from src.cad.freecad_env import get_freecad_python
-
-        py_exe = get_freecad_python()
-        root_dir = Path(__file__).resolve().parent.parent.parent.parent
-        overrides_json = json.dumps(parameter_overrides or {})
-
-        cmd = [
-            py_exe,
-            "-m", "src.cad.reconstruction_cad_builder",
-            str(plan_path),
-            "--output-dir", str(pdir),
-            "--stem", stem,
-            "--overrides", overrides_json,
-        ]
-
-        proc = subprocess.run(cmd, capture_output=True, text=True, cwd=str(root_dir))
-        if proc.returncode != 0:
-            err_msg = proc.stderr.strip() or proc.stdout.strip()
-            raise RuntimeError(f"3D CAD Reconstruction engine error: {err_msg}")
-
-        try:
-            result = json.loads(proc.stdout)
-        except json.JSONDecodeError:
-            from src.cad.reconstruction_cad_builder import ReconstructionCADBuilder
-            builder = ReconstructionCADBuilder()
-            result = builder.build_solid(
-                plan_dict=plan_dict,
-                parameter_overrides=parameter_overrides or {},
-                output_dir=pdir,
-                stem=stem,
-            )
-
-        step_path = Path(result["step_file"])
-        fcstd_path = Path(result["fcstd_file"])
-        mesh_path = Path(result["mesh_file"])
-
-        # Generate standalone build123d Python script
-        try:
-            from src.drawing.build123d_exporter import Build123dExporter
-            b123d_code = Build123dExporter().generate_code(plan_dict, title=stem, parameter_overrides=parameter_overrides)
-            b123d_path = pdir / f"{stem}_reconstructed_build123d.py"
-            b123d_path.write_text(b123d_code, encoding="utf-8")
-        except Exception:
-            b123d_path = None
-
-        meta.setdefault("artifacts", {})
-        meta["artifacts"]["reconstructed_step"] = {
-            "artifact_id": "reconstructed_step",
-            "filename": step_path.name,
-            "file_path": str(step_path),
-            "artifact_type": "step",
-        }
-        meta["artifacts"]["reconstructed_fcstd"] = {
-            "artifact_id": "reconstructed_fcstd",
-            "filename": fcstd_path.name,
-            "file_path": str(fcstd_path),
-            "artifact_type": "fcstd",
-        }
-        meta["artifacts"]["reconstructed_mesh"] = {
-            "artifact_id": "reconstructed_mesh",
-            "filename": mesh_path.name,
-            "file_path": str(mesh_path),
-            "artifact_type": "reconstructed_mesh_json",
-        }
-        if b123d_path and b123d_path.exists():
-            meta["artifacts"]["reconstructed_build123d"] = {
-                "artifact_id": "reconstructed_build123d",
-                "filename": b123d_path.name,
-                "file_path": str(b123d_path),
-                "artifact_type": "python_script",
-            }
-        meta["status"] = "reconstructed"
-        meta["updated_at"] = datetime.now(timezone.utc).isoformat()
-        self._save_meta(project_id, meta)
-
-        return result
-
-    def get_reconstructed_mesh(self, project_id: str) -> Dict[str, Any]:
-        """Load tessellated 3D WebGL mesh for reconstructed CAD solid."""
-        meta = self._load_meta(project_id)
-        mesh_art = meta.get("artifacts", {}).get("reconstructed_mesh")
-        if mesh_art:
-            p = Path(mesh_art["file_path"])
-            if p.exists():
-                return json.loads(p.read_text(encoding="utf-8"))
-
-        pdir = self._project_dir(project_id)
-        stem = Path(meta["filename"]).stem
-        cand = pdir / f"{stem}_reconstructed_mesh.json"
-        if cand.exists():
-            return json.loads(cand.read_text(encoding="utf-8"))
-
-        raise FileNotFoundError(f"No reconstructed mesh available for project '{project_id}'. Run 3D reconstruction first.")
 
     def get_artifact_path(self, project_id: str, artifact_id: str) -> Path:
         """Resolve artifact to filesystem path."""
@@ -352,13 +283,12 @@ class DrawingProjectService:
             "understanding_txt": [pdir / f"{stem}_drawing_understanding.txt"],
             "feature_graph": [pdir / f"{stem}_feature_graph.json"],
             "reconstruction_plan": [pdir / f"{stem}_reconstruction_plan.json"],
+            "gemini_cad_plan": [pdir / "gemini_cad_reconstruction_plan.json"],
+            "reconstructed_step": [pdir / "reconstructed_step.step"],
+            "reconstructed_mesh": [pdir / "reconstructed_mesh.json"],
             "reconstruction_evidence_audit": [pdir / f"{stem}_reconstruction_evidence_audit.json"],
             "reconstruction_evidence_report": [pdir / f"{stem}_reconstruction_evidence_report.md"],
-            "reconstructed_step": [pdir / f"{stem}_reconstructed.STEP", pdir / f"{stem}_reconstructed.step"],
-            "reconstructed_fcstd": [pdir / f"{stem}_reconstructed.FCStd"],
-            "reconstructed_build123d": [pdir / f"{stem}_reconstructed_build123d.py", pdir / "reconstructed_build123d.py"],
-            "reconstructed_mesh": [pdir / f"{stem}_reconstructed_mesh.json"],
-            "visual_concept_render": [pdir / "visual_concept_render.png", pdir / f"{stem}_visual_concept.png"],
+            "reconstruction_debug_trace": [pdir / f"{stem}_reconstruction_debug_trace.json", pdir / "reconstruction_debug_trace.json"],
             "manifest_claude": [pdir / f"{stem}_multimodal_request_claude.json"],
             "manifest_gemini": [pdir / f"{stem}_multimodal_request_gemini.json"],
         }
@@ -369,6 +299,77 @@ class DrawingProjectService:
         raise FileNotFoundError(
             f"Artifact '{artifact_id}' not found for drawing project '{project_id}'."
         )
+
+    def execute_custom_cad_plan(self, project_id: str, plan_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute a structured CAD reconstruction plan using controlled FreeCAD / OCCT tools."""
+        from src.drawing.cad_reconstructor import CADReconstructor
+        from src.drawing.reconstruction_schemas import CADReconstructionPlan
+
+        pdir = self._project_dir(project_id)
+        pdir.mkdir(parents=True, exist_ok=True)
+        plan = CADReconstructionPlan.model_validate(plan_data)
+
+        # Save plan to workspace
+        plan_path = pdir / "gemini_cad_reconstruction_plan.json"
+        plan_path.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
+
+        reconstructor = CADReconstructor(workspace_root=_WORKSPACE_ROOT)
+        mesh_data = reconstructor.reconstruct_from_plan(project_id, plan)
+
+        meta = self._load_meta(project_id)
+        meta["artifacts"]["gemini_cad_plan"] = {
+            "artifact_id": "gemini_cad_plan",
+            "filename": "gemini_cad_reconstruction_plan.json",
+            "file_path": str(plan_path),
+            "artifact_type": "gemini_cad_plan_json",
+        }
+        meta["artifacts"]["reconstructed_step"] = {
+            "artifact_id": "reconstructed_step",
+            "filename": "reconstructed_step.step",
+            "file_path": str(pdir / "reconstructed_step.step"),
+            "artifact_type": "step_model",
+        }
+        meta["artifacts"]["reconstructed_mesh"] = {
+            "artifact_id": "reconstructed_mesh",
+            "filename": "reconstructed_mesh.json",
+            "file_path": str(pdir / "reconstructed_mesh.json"),
+            "artifact_type": "mesh_json",
+        }
+        self._save_meta(project_id, meta)
+        return mesh_data
+
+    def gemini_reconstruct_cad(self, project_id: str) -> Dict[str, Any]:
+        """Invoke Gemini Vision CAD Brain to interpret drawing and execute controlled CAD primitives."""
+        from src.drawing.gemini_cad_reconstructor import GeminiCADReconstructionEngine
+
+        pdir = self._project_dir(project_id)
+        meta = self._load_meta(project_id)
+        png_path = self.get_artifact_path(project_id, "normalized_png")
+
+        engine = GeminiCADReconstructionEngine(workspace_root=_WORKSPACE_ROOT)
+        plan = engine.generate_reconstruction_plan(project_id, png_path, output_dir=pdir)
+        result = engine.execute_and_export(project_id, plan, output_dir=pdir)
+
+        meta["artifacts"]["gemini_cad_plan"] = {
+            "artifact_id": "gemini_cad_plan",
+            "filename": "gemini_cad_reconstruction_plan.json",
+            "file_path": str(pdir / "gemini_cad_reconstruction_plan.json"),
+            "artifact_type": "gemini_cad_plan_json",
+        }
+        meta["artifacts"]["reconstructed_step"] = {
+            "artifact_id": "reconstructed_step",
+            "filename": "reconstructed_step.step",
+            "file_path": result["step_path"],
+            "artifact_type": "step_model",
+        }
+        meta["artifacts"]["reconstructed_mesh"] = {
+            "artifact_id": "reconstructed_mesh",
+            "filename": "reconstructed_mesh.json",
+            "file_path": result["mesh_file"],
+            "artifact_type": "mesh_json",
+        }
+        self._save_meta(project_id, meta)
+        return result
 
     def get_status_response(self, project_id: str) -> DrawingProjectStatusResponse:
         meta = self._load_meta(project_id)

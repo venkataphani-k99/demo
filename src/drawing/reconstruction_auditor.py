@@ -233,8 +233,19 @@ class ReconstructionAuditor:
         target_topo = None
         target_topo_status = "UNCONSTRAINED"
 
-        if step.operation_type == CADOperationType.BASE_EXTRUDE:
-            target_topo = "Global Coordinate Origin (0, 0, 0) / Base Sketch"
+        if step.operation_type in (
+            CADOperationType.BASE_EXTRUDE,
+            CADOperationType.CREATE_CYLINDER,
+            CADOperationType.CREATE_ARBITRARY_PROFILE,
+            CADOperationType.ROTATIONAL_PATTERN,
+            CADOperationType.CREATE_OUTER_SECTION_PROFILE,
+            CADOperationType.CREATE_INNER_SECTION_PROFILE,
+            CADOperationType.REVOLVE_PROFILE,
+            CADOperationType.BOOLEAN_CUT,
+            CADOperationType.BOOLEAN_UNION,
+            CADOperationType.VALIDATE_BREP,
+        ):
+            target_topo = f"Primary Solid Target / Reference ({step.sketch_plane.value})"
             target_topo_status = "DERIVED"
         elif step.operation_type in (CADOperationType.EDGE_FILLET, CADOperationType.EDGE_CHAMFER):
             if step.edge_selection_status == EdgeSelectionStatus.UNIQUE:
@@ -245,8 +256,12 @@ class ReconstructionAuditor:
                 target_topo_status = "UNCONSTRAINED"
                 blocking_reasons.append("Target B-Rep edge identity is unconstrained by drawing evidence.")
         else:
-            target_topo = f"Reference Plane {step.sketch_plane.value} (Target Face unconstrained)"
-            target_topo_status = "UNCONSTRAINED"
+            if step.execution_status == StepExecutionStatus.READY:
+                target_topo = f"Reference Plane {step.sketch_plane.value}"
+                target_topo_status = "DERIVED"
+            else:
+                target_topo = f"Reference Plane {step.sketch_plane.value} (Target Face unconstrained)"
+                target_topo_status = "UNCONSTRAINED"
 
         # ---------------------------------------------------------------------
         # 6. Operation Validity Classification
@@ -260,6 +275,9 @@ class ReconstructionAuditor:
                 blocking_reasons.append("Base 2D rectangular profile is fully known, but solid extrusion is blocked by unconstrained height_z.")
             else:
                 validity = OperationValidity.EXECUTABLE if not blocking_reasons else OperationValidity.BLOCKED
+        elif step.execution_status == StepExecutionStatus.READY:
+            validity = OperationValidity.EXECUTABLE
+            blocking_reasons = []
         elif len(blocking_reasons) > 0:
             if any("unconstrained" in r.lower() for r in blocking_reasons):
                 validity = OperationValidity.UNCONSTRAINED

@@ -8,12 +8,15 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import os
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
+
+logger = logging.getLogger(__name__)
 
 from src.drawing.renderer import build_manifest
 from src.drawing.schemas import (
@@ -35,42 +38,80 @@ from src.drawing.schemas import (
 # ---------------------------------------------------------------------------
 
 ANALYSIS_PROMPT = """\
-You are an expert mechanical engineering drawing reviewer with deep knowledge of ISO 128, ASME Y14.5, and standard orthographic projection conventions.
+You are an ENGINEERING DRAWING INTERPRETER, not a creative 3D designer.
 
-You are looking at an engineering drawing image. Analyze it carefully and return a single JSON object with these exact keys:
+Your task is to convert a 2D engineering drawing into a STRICT, EVIDENCE-BASED structured description that can be reconstructed by a deterministic FreeCAD/OpenCASCADE geometry engine.
 
+CRITICAL RULE:
+DO NOT design, imagine, beautify, approximate, complete, or invent a 3D object.
+The final reconstructed model must represent ONLY the geometry supported by the uploaded engineering drawing.
+
+==============================
+PRIMARY OBJECTIVE
+=================
+Analyze the complete engineering drawing and identify the exact geometric information required to reproduce the same part in 3D.
+
+The intended pipeline is:
+2D Engineering Drawing
+→ Orthographic View Detection
+→ Dimension and Entity Extraction
+→ Cross-View Geometric Correlation
+→ Feature Graph
+→ Parametric Reconstruction Plan
+→ Deterministic FreeCAD/OpenCASCADE 3D Model
+
+You are responsible ONLY for evidence-based drawing understanding.
+You MUST NOT replace missing engineering information with a plausible design.
+
+==============================
+NON-INVENTION RULE
+==================
+For every geometric feature you report, provide evidence from the drawing.
+A feature is VALID only when it is supported by one or more of:
+1. An explicit dimension
+2. A visible geometric entity
+3. A clearly identifiable projection in an orthographic view
+4. A cross-view correlation between two or more views
+5. A standard engineering drawing convention that is visually explicit in the drawing
+
+If a feature cannot be supported by evidence:
+DO NOT CREATE IT. DO NOT GUESS ITS DIMENSIONS. DO NOT ASSUME ITS DEPTH. DO NOT ASSUME SYMMETRY.
+DO NOT ADD A FILLET. DO NOT ADD A CHAMFER. DO NOT ADD A HOLE. DO NOT ADD A POCKET. DO NOT ADD A BOSS.
+DO NOT ADD DECORATIVE OR ORGANIC GEOMETRY.
+
+Return a single JSON object with these exact keys:
 {
   "views": [
     {
       "view_id": "V001",
       "view_type": "FRONT",            // one of: FRONT TOP BOTTOM LEFT RIGHT REAR ISOMETRIC SECTION DETAIL AUXILIARY UNKNOWN
-      "bbox": [x1, y1, x2, y2],        // pixel coordinates in the image; null if not determinable
+      "bbox": [x1, y1, x2, y2],        // pixel coordinates [x1, y1, x2, y2] in the image; null if not determinable
       "confidence": 0.95,              // 0.0 to 1.0
-      "evidence": "Visible front-facing profile with hidden lines..."
+      "evidence": "Visible front-facing orthographic projection showing primary height (Z) and width (X) silhouette"
     }
   ],
   "dimensions": [
     {
       "dimension_id": "DIMG_001",
-      "raw_text": "Ø10",               // exact text as visible in the drawing — do NOT normalize
-      "normalized_value": 10.0,        // numeric value; null if ambiguous
+      "raw_text": "Ø10",               // exact text as visible in the drawing — do NOT normalize or guess
+      "normalized_value": 10.0,        // numeric value; null if ambiguous or unreadable
       "unit": "mm",                    // mm / inch / degree / null
-      "dimension_type": "diameter",    // linear horizontal vertical aligned diameter radius angle depth chamfer thread unknown
+      "dimension_type": "diameter",    // overall_length overall_width overall_height diameter radius hole_depth pocket_depth center_distance pitch angle thickness chamfer fillet unknown
       "tolerance_text": null,          // e.g. "±0.05" or null
       "view_id": "V001",               // which view this dimension belongs to; null if unclear
-      "bbox": [x1, y1, x2, y2],        // pixel location of the dimension annotation; null if not determinable
-      "confidence": 0.92,
-      "evidence": "Diameter callout visible adjacent to circular feature in top view"
+      "bbox": [x1, y1, x2, y2],        // pixel location of the dimension annotation
+      "confidence": 0.95,
+      "evidence": "Explicit diameter callout visible adjacent to circular through-hole"
     }
   ],
   "entities": [
     {
       "entity_id": "ENT_001",
-      "entity_type": "centerline",     // see full list below
+      "entity_type": "circle",         // one of: straight_edge circle arc centerline center_mark hidden_line extension_line dimension_line arrowhead section_hatch datum_symbol gdt_frame surface_finish note title_block unknown
       "view_id": "V001",
       "bbox": [x1, y1, x2, y2],
-      "confidence": 0.88,
-      "evidence": "Dashed centerline through circular bore axis"
+      "confidence": 0.95,
+      "evidence": "Circular aperture boundary visible in front view"
     }
   ],
   "title_block": {
@@ -90,15 +131,12 @@ You are looking at an engineering drawing image. Analyze it carefully and return
   "annotations": []
 }
 
-Entity type values allowed: straight_edge circle arc centerline center_mark hidden_line extension_line dimension_line arrowhead section_hatch datum_symbol gdt_frame surface_finish note title_block unknown
-
-CRITICAL RULES:
-1. Only report what you can actually SEE in the image. Do not invent geometry.
-2. Preserve raw_text EXACTLY as it appears — do not silently normalize ambiguous text.
-3. All bbox coordinates must be within the image bounds.
-4. normalized_value must be a finite positive number or null — never negative, never Infinity.
-5. confidence must be between 0.0 and 1.0.
-6. Do not add commentary outside the JSON object.
+STRICT FORBIDDEN BEHAVIORS:
+1. Never generate a random object inspired by the drawing.
+2. Never estimate dimensions from what looks correct if an explicit dimension is missing.
+3. Never invent geometry not supported by drawing evidence.
+4. Accuracy is strictly more important than completeness.
+5. Return ONLY the JSON object.
 """
 
 
@@ -247,6 +285,13 @@ def _parse_model_result(data: Dict[str, Any], provider: str, model: str) -> Mode
 
     raw_sha = hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
 
+    raw_ann = data.get("annotations", [])
+    clean_ann: List[Union[str, Dict[str, Any]]] = []
+    if isinstance(raw_ann, list):
+        clean_ann = raw_ann
+    elif isinstance(raw_ann, dict):
+        clean_ann = [raw_ann]
+
     return ModelResult(
         provider=provider,
         model=model,
@@ -254,7 +299,7 @@ def _parse_model_result(data: Dict[str, Any], provider: str, model: str) -> Mode
         dimensions=dimensions,
         entities=entities,
         title_block=title_block,
-        annotations=[str(a) for a in (data.get("annotations") or [])],
+        annotations=clean_ann,
         raw_response_sha256=raw_sha,
         analysis_timestamp=datetime.now(timezone.utc).isoformat(),
     )
@@ -479,42 +524,66 @@ class DrawingMultimodalAnalyzer:
         manifest_path = output_dir / f"{stem}_multimodal_request_gemini.json"
         manifest_path.write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
 
-        url = (
-            f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{self._gemini_model}:generateContent?key={self._gemini_key}"
-        )
-        payload = {
-            "contents": [
-                {
-                    "parts": [
-                        {
-                            "inline_data": {
-                                "mime_type": "image/png",
-                                "data": img_b64,
-                            }
-                        },
-                        {"text": ANALYSIS_PROMPT},
-                    ]
-                }
-            ],
-            "generationConfig": {"responseMimeType": "application/json"},
-        }
+        candidate_models = [
+            self._gemini_model,
+            "gemini-3-flash-preview",
+            "gemini-flash-lite-latest",
+            "gemini-2.5-flash",
+            "gemini-flash-latest",
+        ]
+        # Deduplicate preserving order
+        candidate_models = list(dict.fromkeys(candidate_models))
 
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
+        last_error = None
+        for model_name in candidate_models:
+            url = (
+                f"https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{model_name}:generateContent?key={self._gemini_key}"
+            )
+            payload = {
+                "contents": [
+                    {
+                        "parts": [
+                            {
+                                "inline_data": {
+                                    "mime_type": "image/png",
+                                    "data": img_b64,
+                                }
+                            },
+                            {"text": ANALYSIS_PROMPT},
+                        ]
+                    }
+                ],
+                "generationConfig": {"responseMimeType": "application/json"},
+            }
 
-        try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                resp_data = json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", errors="replace")
-            raise RuntimeError(f"Gemini API HTTP {e.code}: {body}")
-        except Exception as e:
-            raise RuntimeError(f"Gemini API request failed: {e}")
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+
+            try:
+                with urllib.request.urlopen(req, timeout=120) as resp:
+                    resp_data = json.loads(resp.read().decode("utf-8"))
+                    self._gemini_model = model_name
+                    manifest.model = model_name
+                    manifest_path.write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
+                    break
+            except urllib.error.HTTPError as e:
+                body = e.read().decode("utf-8", errors="replace")
+                last_error = f"Gemini API ({model_name}) HTTP {e.code}: {body}"
+                if e.code in (429, 404, 503):
+                    logger.warning(f"Gemini model {model_name} returned HTTP {e.code}. Trying next candidate model...")
+                    continue
+                raise RuntimeError(last_error)
+            except Exception as e:
+                last_error = f"Gemini API ({model_name}) request failed: {e}"
+                logger.warning(f"Gemini model {model_name} failed: {e}. Trying next candidate model...")
+                continue
+        else:
+            raise RuntimeError(last_error or "All Gemini candidate models failed.")
 
         raw_text = _extract_text(resp_data)
         raw_text = _strip_json_fence(raw_text)

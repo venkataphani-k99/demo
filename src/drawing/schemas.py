@@ -7,95 +7,8 @@ from __future__ import annotations
 
 import enum
 from enum import Enum
-from typing import Any, Dict, List, Optional
-
-from pydantic import BaseModel, Field
-
-# Support both pydantic v1 and v2
-_IS_V2 = hasattr(BaseModel, 'model_dump')
-
-if _IS_V2:
-    from pydantic import field_validator, model_validator
-else:
-    from pydantic import validator as _field_validator_v1, root_validator as _root_validator_v1
-
-    def field_validator(field_name: str, **kwargs):
-        """v1-compatible field_validator."""
-        return _field_validator_v1(field_name, **kwargs)
-
-    def model_validator(mode: str = "before", **kwargs):
-        """v1-compatible model_validator (maps to root_validator).
-        v2 validators raise errors or return self; v1 root_validator
-        must return the values dict. We always return values and let
-        any exceptions propagate.
-        """
-        def decorator(func):
-            def wrapper(cls, values):
-                if not values:
-                    return values
-                # Create a simple object that proxies values to attribute access
-                class _Self:
-                    pass
-                obj = _Self()
-                for k, v in values.items():
-                    setattr(obj, k, v)
-                # Run the v2-style validator; it either raises or succeeds
-                # We ignore its return value (self) since v1 expects a dict
-                func(obj)
-                return values
-            return _root_validator_v1(pre=(mode == "before"), allow_reuse=True)(wrapper)
-        return decorator
-
-import json as _json
-
-
-def _patch_v1_methods() -> None:
-    """Add v2-style instance methods to pydantic v1 BaseModel."""
-    if _IS_V2:
-        return  # v2 already has these methods
-
-    def _model_dump(self: BaseModel, **kwargs) -> dict:
-        return self.dict(**{k: v for k, v in kwargs.items() if k != 'mode'})
-
-    def _model_dump_json(self: BaseModel, **kwargs) -> str:
-        indent = kwargs.get('indent', 2)
-        exclude = kwargs.get('exclude', None)
-        d = self.dict(exclude=exclude) if exclude else self.dict()
-        return _json.dumps(d, indent=indent)
-
-    def _model_dump_model(self: BaseModel, **kwargs) -> dict:
-        return self.dict(**kwargs)
-
-    def _model_copy(self: BaseModel, deep: bool = False, **kwargs) -> BaseModel:
-        return self.copy(deep=deep, **kwargs)
-
-    BaseModel.model_dump = _model_dump_model  # type: ignore
-    BaseModel.model_dump_json = _model_dump_json  # type: ignore
-    BaseModel.model_copy = _model_copy  # type: ignore
-
-
-_patch_v1_methods()
-
-
-def model_dump(model: BaseModel, **kwargs) -> dict:
-    """Serialize model to dict (v1/v2 compatible)."""
-    if hasattr(model, 'model_dump'):
-        return model.model_dump(**kwargs)
-    return model.dict(**kwargs)
-
-
-def model_dump_json(model: BaseModel, **kwargs) -> str:
-    """Serialize model to JSON string (v1/v2 compatible)."""
-    if hasattr(model, 'model_dump_json'):
-        return model.model_dump_json(**kwargs)
-    return _json.dumps(model.dict(**{k: v for k, v in kwargs.items() if k != 'indent'}), indent=kwargs.get('indent', 2))
-
-
-def model_validate(model_cls, data: Any) -> BaseModel:
-    """Parse data into model (v1/v2 compatible)."""
-    if hasattr(model_cls, 'model_validate'):
-        return model_cls.model_validate(data)
-    return model_cls.parse_obj(data)
+from typing import Any, Dict, List, Optional, Union
+from src.drawing.compat import BaseModel, Field, field_validator, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -132,8 +45,13 @@ class DimensionType(str, enum.Enum):
 
 class EntityType(str, enum.Enum):
     STRAIGHT_EDGE = "straight_edge"
+    LINE = "line"
     CIRCLE = "circle"
     ARC = "arc"
+    ELLIPSE = "ellipse"
+    SPLINE = "spline"
+    POLYLINE = "polyline"
+    CLOSED_PROFILE = "closed_profile"
     CENTERLINE = "centerline"
     CENTER_MARK = "center_mark"
     HIDDEN_LINE = "hidden_line"
@@ -147,6 +65,35 @@ class EntityType(str, enum.Enum):
     NOTE = "note"
     TITLE_BLOCK = "title_block"
     UNKNOWN = "unknown"
+
+
+class CurveType(str, enum.Enum):
+    LINE = "line"
+    ARC = "arc"
+    CIRCLE = "circle"
+    ELLIPSE = "ellipse"
+    SPLINE = "spline"
+    POLYLINE = "polyline"
+    CLOSED_PROFILE = "closed_profile"
+
+
+class ProfileCurve(BaseModel):
+    """Detailed geometric curve or boundary segment of a physical feature."""
+    curve_id: str
+    curve_type: CurveType
+    source_view: Optional[str] = None
+    start_point: Optional[List[float]] = None     # [u, v] or [x, y, z]
+    end_point: Optional[List[float]] = None       # [u, v] or [x, y, z]
+    center_point: Optional[List[float]] = None    # [u, v] or [x, y, z]
+    radius: Optional[float] = None
+    major_radius: Optional[float] = None
+    minor_radius: Optional[float] = None
+    control_points: List[List[float]] = Field(default_factory=list)
+    polyline_points: List[List[float]] = Field(default_factory=list)
+    is_closed: bool = False
+    confidence: float = Field(ge=0.0, le=1.0, default=1.0)
+    evidence: str = ""
+
 
 
 class ConsensusState(str, enum.Enum):
@@ -169,13 +116,18 @@ class BoundingBox(BaseModel):
     y2: float
 
     @model_validator(mode="after")
-    def check_valid(self) -> "BoundingBox":
-        if self.x2 <= self.x1 or self.y2 <= self.y1:
-            raise ValueError(
-                f"Invalid bounding box: x2 ({self.x2}) must be > x1 ({self.x1}) "
-                f"and y2 ({self.y2}) must be > y1 ({self.y1})"
-            )
-        return self
+    def check_valid(cls, values):
+        if isinstance(values, dict):
+            x1, y1 = values.get("x1"), values.get("y1")
+            x2, y2 = values.get("x2"), values.get("y2")
+            if x1 is not None and x2 is not None and x2 <= x1:
+                raise ValueError(f"Invalid bounding box: x2 ({x2}) must be > x1 ({x1})")
+            if y1 is not None and y2 is not None and y2 <= y1:
+                raise ValueError(f"Invalid bounding box: y2 ({y2}) must be > y1 ({y1})")
+        elif hasattr(values, "x1"):
+            if values.x2 <= values.x1 or values.y2 <= values.y1:
+                raise ValueError(f"Invalid bounding box: x2 ({values.x2}) must be > x1 ({values.x1})")
+        return values
 
     def as_list(self) -> List[float]:
         return [self.x1, self.y1, self.x2, self.y2]
@@ -332,7 +284,7 @@ class ModelResult(BaseModel):
     dimensions: List[ExtractedDimension] = Field(default_factory=list)
     entities: List[GeometricEntity] = Field(default_factory=list)
     title_block: Optional[TitleBlock] = None
-    annotations: List[str] = Field(default_factory=list)
+    annotations: List[Union[str, Dict[str, Any]]] = Field(default_factory=list)
     raw_response_sha256: Optional[str] = None
     analysis_timestamp: str = ""
     error: Optional[str] = None          # set if analysis failed
@@ -394,7 +346,40 @@ class FeatureType(str, enum.Enum):
     POCKET = "pocket"
     CYLINDRICAL = "cylindrical"
     LINEAR_STEP = "linear_step"
+    ARBITRARY_PROFILE = "arbitrary_profile"
+    COMPOSITE_PROFILE = "composite_profile"
+    EXTRUDED_PROFILE = "extruded_profile"
+    BLADE = "blade"
+    HUB = "hub"
+    LOFT = "loft"
+    SWEEP = "sweep"
+    REVOLVED_FEATURE = "revolved_feature"
+    ROTATIONAL_PATTERN = "rotational_pattern"
+    LINEAR_PATTERN = "linear_pattern"
+    PATTERNED_FEATURE = "patterned_feature"
+    TAPERED_EXTRUSION = "tapered_extrusion"
+    FREEFORM_PROFILE = "freeform_profile"
     UNKNOWN = "unknown"
+
+
+class RotationalPatternData(BaseModel):
+    """Specification of a rotational feature pattern array around a 3D axis."""
+    source_feature_id: str
+    rotation_axis: List[float] = Field(default_factory=lambda: [0.0, 0.0, 1.0])  # e.g. [0, 0, 1] for Z
+    count: int = 3                                                                # e.g. 3 blades
+    angle_step_deg: float = 120.0                                                 # e.g. 120 deg
+    total_angle_deg: float = 360.0                                                # e.g. 360 deg
+    center_point: List[float] = Field(default_factory=lambda: [0.0, 0.0, 0.0])   # origin of rotation
+    evidence: str = ""
+
+
+class LinearPatternData(BaseModel):
+    """Specification of a linear feature pattern array along a 3D vector."""
+    source_feature_id: str
+    direction_vector: List[float] = Field(default_factory=lambda: [1.0, 0.0, 0.0])
+    count: int = 2
+    spacing_mm: float = 10.0
+    evidence: str = ""
 
 
 class KnowledgeState(str, enum.Enum):
@@ -446,6 +431,9 @@ class DrawingFeature(BaseModel):
     knowledge_state: KnowledgeState = KnowledgeState.KNOWN
     controlling_view_types: List[ViewType] = Field(default_factory=list)
     parameters: List[FeatureParameter] = Field(default_factory=list)
+    profile_curves: List[ProfileCurve] = Field(default_factory=list)
+    rotational_pattern: Optional[RotationalPatternData] = None
+    linear_pattern: Optional[LinearPatternData] = None
     bbox_union: Optional[BoundingBox] = None
     evidence: str = ""
     evidence_record: Optional[FeatureEvidenceRecord] = None
@@ -487,6 +475,7 @@ class FeatureGraph(BaseModel):
     features: List[DrawingFeature] = Field(default_factory=list)
     cross_view_alignment: Optional[CrossViewAlignment] = None
     blueprint: Optional[ReconstructionBlueprint] = None
+    primary_strategy: Optional[str] = None
     synthesis_timestamp: str = ""
 
 

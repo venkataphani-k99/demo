@@ -4,9 +4,9 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
-from fastapi import APIRouter, Body, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 
 from src.api.services.drawing_project_service import DrawingProjectService
@@ -24,6 +24,19 @@ _load_env()
 
 router = APIRouter(prefix="/drawing-projects", tags=["Drawing Projects (UC2)"])
 _svc = DrawingProjectService()
+
+
+# ---------------------------------------------------------------------------
+# GET /drawing-projects — List all drawing projects
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "",
+    summary="List all UC2 Drawing Projects",
+)
+def list_drawing_projects() -> list[Dict[str, Any]]:
+    """Returns a list of all drawing projects in descending chronological order."""
+    return _svc.list_projects()
 
 
 # ---------------------------------------------------------------------------
@@ -231,6 +244,13 @@ def analyze_drawing_project(project_id: str) -> Dict[str, Any]:
         # Step 8: Save
         json_path = _svc.save_understanding(project_id, understanding)
 
+        # Step 9: Phase 19B Automatic 3D Mesh & Solid Generation
+        try:
+            from src.drawing.cad_reconstructor import CADReconstructor
+            CADReconstructor().reconstruct_mesh(project_id, understanding=understanding)
+        except Exception:
+            pass
+
         return {
             "project_id": project_id,
             "status": "analyzed",
@@ -356,56 +376,6 @@ def get_reconstruction_plan(project_id: str) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# POST /drawing-projects/{id}/reconstruct — Phase 19B Deterministic 3D Solid Construction
-# ---------------------------------------------------------------------------
-
-@router.post(
-    "/{project_id}/reconstruct",
-    summary="Execute Phase 19B Deterministic 3D CAD Solid Reconstruction (STEP & FCStd)",
-)
-def reconstruct_3d_solid(
-    project_id: str,
-    overrides: Optional[Dict[str, Any]] = Body(default=None),
-) -> Dict[str, Any]:
-    """
-    Executes the Parametric Reconstruction DAG in OpenCASCADE/FreeCAD to synthesize
-    a real 3D solid model. Accepts optional human parameter overrides (e.g. height_z).
-    Exports .STEP, .FCStd, and WebGL mesh artifacts.
-    """
-    try:
-        clean_overrides: Dict[str, float] = {}
-        if overrides:
-            for k, v in overrides.items():
-                try:
-                    clean_overrides[k] = float(v)
-                except (ValueError, TypeError):
-                    pass
-        return _svc.reconstruct_3d_solid(project_id, clean_overrides)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"3D CAD Reconstruction failed: {exc}")
-
-
-# ---------------------------------------------------------------------------
-# GET /drawing-projects/{id}/reconstructed-mesh — Reconstructed WebGL Mesh
-# ---------------------------------------------------------------------------
-
-@router.get(
-    "/{project_id}/reconstructed-mesh",
-    summary="Get 3D WebGL Tessellated Mesh for Reconstructed CAD Solid",
-)
-def get_reconstructed_mesh(project_id: str) -> Dict[str, Any]:
-    """Returns the tessellated 3D mesh and B-Rep topology of the reconstructed solid."""
-    try:
-        return _svc.get_reconstructed_mesh(project_id)
-    except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
-
-
-# ---------------------------------------------------------------------------
 # GET /drawing-projects/{id}/artifacts/{artifact_id} — Download artifact
 # ---------------------------------------------------------------------------
 
@@ -414,7 +384,7 @@ def get_reconstructed_mesh(project_id: str) -> Dict[str, Any]:
     summary="Download UC2 Drawing Project Artifact",
 )
 def download_artifact(project_id: str, artifact_id: str) -> FileResponse:
-    """Stream a downloadable artifact: normalized PNG, understanding JSON, STEP, or FCStd."""
+    """Stream a downloadable artifact: normalized PNG, understanding JSON, or request manifests."""
     try:
         art_path = _svc.get_artifact_path(project_id, artifact_id)
     except FileNotFoundError:
@@ -426,10 +396,6 @@ def download_artifact(project_id: str, artifact_id: str) -> FileResponse:
         ".txt": "text/plain",
         ".pdf": "application/pdf",
         ".svg": "image/svg+xml",
-        ".step": "application/step",
-        ".stp": "application/step",
-        ".fcstd": "application/octet-stream",
-        ".md": "text/markdown",
     }
     media_type = media_map.get(art_path.suffix.lower(), "application/octet-stream")
     return FileResponse(
@@ -437,3 +403,88 @@ def download_artifact(project_id: str, artifact_id: str) -> FileResponse:
         filename=art_path.name,
         media_type=media_type,
     )
+
+
+# ---------------------------------------------------------------------------
+# GET /drawing-projects/{id}/mesh — Exact 3D B-Rep Mesh for Three.js
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/{project_id}/mesh",
+    summary="Get 3D Reconstructed Mesh and Wireframe Geometry for Three.js Viewport",
+)
+def get_drawing_project_mesh(project_id: str, force_rebuild: bool = False) -> Dict[str, Any]:
+    """Returns 3D triangulated mesh, edge wireframes, and per-face mappings extracted from reconstructed solid."""
+    try:
+        from src.drawing.cad_reconstructor import CADReconstructor
+        return CADReconstructor().reconstruct_mesh(project_id, force_rebuild=force_rebuild)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"3D mesh generation failed: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# POST /drawing-projects/{id}/gemini-reconstruct — Gemini 2D-to-3D CAD Engine
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/{project_id}/gemini-reconstruct",
+    summary="Execute Gemini-Assisted 2D-to-3D CAD Reconstruction",
+)
+def gemini_reconstruct(project_id: str) -> Dict[str, Any]:
+    """
+    Invokes Gemini Vision CAD Brain to interpret drawing, generate a structured
+    CAD reconstruction plan, execute it with controlled FreeCAD primitives, and export STEP + Mesh.
+    """
+    try:
+        return _svc.gemini_reconstruct_cad(project_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Gemini CAD reconstruction failed: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# POST /drawing-projects/{id}/execute-plan — Execute Custom CAD Plan
+# ---------------------------------------------------------------------------
+
+@router.post(
+    "/{project_id}/execute-plan",
+    summary="Execute a Structured CAD Reconstruction Plan via Controlled Tools",
+)
+def execute_cad_plan(project_id: str, plan: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Accepts a validated CADReconstructionPlan JSON and deterministically executes
+    each step via FreeCAD / OpenCASCADE without running arbitrary Python code.
+    """
+    try:
+        return _svc.execute_custom_cad_plan(project_id, plan)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"CAD plan execution failed: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# GET /drawing-projects/{id}/reconstruction-plan — Get CAD Plan JSON
+# ---------------------------------------------------------------------------
+
+@router.get(
+    "/{project_id}/reconstruction-plan",
+    summary="Retrieve Active CAD Reconstruction Plan",
+)
+def get_reconstruction_plan(project_id: str) -> Dict[str, Any]:
+    """Returns the JSON CAD reconstruction plan for this drawing project."""
+    try:
+        plan_path = _svc.get_artifact_path(project_id, "gemini_cad_plan")
+        import json
+        return json.loads(plan_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        try:
+            plan_path = _svc.get_artifact_path(project_id, "reconstruction_plan")
+            import json
+            return json.loads(plan_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="No reconstruction plan found for this project.")
+
+
+

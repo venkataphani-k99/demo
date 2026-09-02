@@ -21,7 +21,11 @@ from src.drawing.schemas import (
 class ReconstructionStatus(str, enum.Enum):
     COMPLETE = "COMPLETE"                             # 100% confirmed envelope and all feature parameters
     PARTIAL_ASSUMED = "PARTIAL_ASSUMED"               # Contains unconstrained or partially constrained parameters
+    PARTIALLY_CONSTRAINED = "PARTIALLY_CONSTRAINED"   # Critical features defined, but some depths/offsets unconstrained
     INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"   # Missing critical base envelope dimensions
+    INSUFFICIENT_INFORMATION = "INSUFFICIENT_INFORMATION" # Critical geometry cannot be determined from drawing
+    AMBIGUOUS = "AMBIGUOUS"                           # Conflicting multi-view or multi-model interpretations
+    VALIDATION_FAILED = "VALIDATION_FAILED"           # Reconstructed solid does not match drawing callouts
 
 
 class StepExecutionStatus(str, enum.Enum):
@@ -29,6 +33,7 @@ class StepExecutionStatus(str, enum.Enum):
     PARTIALLY_CONSTRAINED = "PARTIALLY_CONSTRAINED"   # Profile known, but position or depth/extent is unconstrained
     BLOCKED_MISSING_PARAMETER = "BLOCKED_MISSING_PARAMETER" # Critical prerequisite parameter missing (e.g. base height)
     SKIPPED_AMBIGUOUS = "SKIPPED_AMBIGUOUS"           # Conflicting multi-model evidence prevents deterministic solid creation
+    REJECTED = "REJECTED"                             # Violates dimensional or topological sanity checks
 
 
 class HoleTermination(str, enum.Enum):
@@ -51,11 +56,25 @@ class SketchPlane(str, enum.Enum):
 
 class CADProfileType(str, enum.Enum):
     RECTANGLE = "rectangle"
+    CIRCLE = "circle"
     CIRCULAR = "circular"
     SLOT = "slot"
     POLYGON = "polygon"
+    ARBITRARY_CLOSED_PROFILE = "arbitrary_closed_profile"
+    COMPOSITE_PROFILE = "composite_profile"
+    SYMMETRIC_PROFILE = "symmetric_profile"
+    AIRFOIL_OR_BLADE_PROFILE = "airfoil_or_blade_profile"
     ARCS_AND_LINES = "arcs_and_lines"
     UNCONSTRAINED = "unconstrained"
+    UNKNOWN = "unknown"
+
+
+class PrimaryReconstructionStrategy(str, enum.Enum):
+    AXISYMMETRIC_REVOLVED = "AXISYMMETRIC_REVOLVED"
+    HUB_BLADE_PATTERN = "HUB_BLADE_PATTERN"
+    ARBITRARY_PROFILE = "ARBITRARY_PROFILE"
+    PRISMATIC_RECTANGLE = "PRISMATIC_RECTANGLE"
+    BLOCKED_INSUFFICIENT = "BLOCKED_INSUFFICIENT"
 
 
 class CADOperationType(str, enum.Enum):
@@ -66,6 +85,31 @@ class CADOperationType(str, enum.Enum):
     CYLINDRICAL_FEATURE = "cylindrical_feature"
     EDGE_FILLET = "edge_fillet"
     EDGE_CHAMFER = "edge_chamfer"
+    CREATE_BOX = "create_box"
+    CREATE_CYLINDER = "create_cylinder"
+    CREATE_CONE = "create_cone"
+    CREATE_PRISM = "create_prism"
+    CREATE_POLYGON_PROFILE = "create_polygon_profile"
+    CREATE_ARBITRARY_PROFILE = "create_arbitrary_profile"
+    CREATE_COMPOSITE_PROFILE = "create_composite_profile"
+    CREATE_OUTER_SECTION_PROFILE = "create_outer_section_profile"
+    CREATE_INNER_SECTION_PROFILE = "create_inner_section_profile"
+    EXTRUDE_PROFILE = "extrude_profile"
+    TAPERED_EXTRUDE = "tapered_extrude"
+    LOFT_PROFILES = "loft_profiles"
+    SWEEP_PROFILE = "sweep_profile"
+    REVOLVE_PROFILE = "revolve_profile"
+    BOOLEAN_UNION = "boolean_union"
+    BOOLEAN_CUT = "boolean_cut"
+    BOOLEAN_INTERSECTION = "boolean_intersection"
+    DRILL_HOLE = "drill_hole"
+    CREATE_SLOT = "create_slot"
+    CREATE_POCKET = "create_pocket"
+    ROTATIONAL_PATTERN = "rotational_pattern"
+    LINEAR_PATTERN = "linear_pattern"
+    APPLY_FILLET = "apply_fillet"
+    APPLY_CHAMFER = "apply_chamfer"
+    VALIDATE_BREP = "validate_brep"
 
 
 class FeaturePlacement(BaseModel):
@@ -147,15 +191,23 @@ class ReconstructionEvidenceAudit(BaseModel):
 
 class ParametricParameter(BaseModel):
     """A parameter in the CAD reconstruction DAG with strict Tier A/B/C provenance."""
-    name: str                                  # "width_x", "depth_y", "height_z", "diameter", "radius", "depth"
-    value: Optional[float]                     # None if unconstrained
+    name: str                                  # "width_x", "depth_y", "height_z", "diameter", "radius", "depth", "points"
+    value: Optional[Any] = None                # Numeric value, coordinates, or None if unconstrained
     unit: str = "mm"
     source_tier_a_dim_id: Optional[str] = None # e.g. "DIMG_014"
     source_tier_a_text: Optional[str] = None   # e.g. "70.04"
-    tier_b_feature_id: str                     # e.g. "FEAT_001"
+    tier_b_feature_id: Optional[str] = "FEAT_001" # e.g. "FEAT_001"
     is_assumed: bool = False                   # True if parameter is an assumed fallback
     assumption_rationale: Optional[str] = None # e.g. "Requires human confirmation"
     confidence: float = Field(ge=0.0, le=1.0, default=1.0)
+
+
+class AxisEvidence(BaseModel):
+    """Explicit evidence and provenance for a CAD revolve or feature orientation axis."""
+    axis_source: str = "detected_section_symmetry_axis"
+    source_view: str = "SECTION_A_A"
+    coordinate_system: str = "normalized_cad_coordinates"
+    confidence: float = 1.0
 
 
 class ParametricCADStep(BaseModel):
@@ -174,6 +226,7 @@ class ParametricCADStep(BaseModel):
     edge_selection_status: Optional[EdgeSelectionStatus] = None
     candidate_edge_evidence: List[str] = Field(default_factory=list)
     parameters: Dict[str, ParametricParameter] = Field(default_factory=dict)
+    axis_evidence: Optional[AxisEvidence] = None
     controlling_views: List[ViewType] = Field(default_factory=list)
     tier_a_entity_ids: List[str] = Field(default_factory=list)
     knowledge_state: KnowledgeState = KnowledgeState.KNOWN
@@ -184,6 +237,73 @@ class ParametricCADStep(BaseModel):
     known_parameters: List[str] = Field(default_factory=list)
     unknown_parameters: List[str] = Field(default_factory=list)
     unresolved_notes: List[str] = Field(default_factory=list)
+    profile_curves: List[Any] = Field(default_factory=list)
+    rotational_pattern: Optional[Dict[str, Any]] = None
+    linear_pattern: Optional[Dict[str, Any]] = None
+
+
+class SectionStationValidation(BaseModel):
+    """Dimensional and geometric validation check at an explicit section height/station."""
+    validation_type: str = "section_station"
+    station_z: float
+    expected_diameter: float
+    actual_diameter: float
+    tolerance: float = 2.0
+    result: str = "PASS"  # "PASS" | "FAIL"
+    details: Optional[str] = None
+
+
+class ArtifactTrace(BaseModel):
+    """Full deterministic trace from B-Rep kernel artifact down to Three.js view layer."""
+    reconstruction_id: str
+    plan_file_path: Optional[str] = None
+    plan_type: str = "ParametricReconstructionPlan"
+    selected_strategy: str = "AXISYMMETRIC_REVOLVED"
+    brep_file_path: Optional[str] = None
+    brep_hash: Optional[str] = None
+    brep_bounding_box: Dict[str, Any] = Field(default_factory=dict)
+    brep_validation_result: Dict[str, Any] = Field(default_factory=dict)
+    step_export_result: str = "PASS"
+    tessellation_result: str = "PASS"
+    mesh_artifact_path: Optional[str] = None
+    mesh_hash: Optional[str] = None
+    mesh_bounding_box: Dict[str, Any] = Field(default_factory=dict)
+    frontend_model_id: Optional[str] = None
+    actual_threejs_model_id: Optional[str] = None
+    bounds_consistency: str = "PASS"
+    artifact_match: str = "PASS"
+
+
+class ReconstructionDebugStep(BaseModel):
+    """Debug trace record for one step in the CAD reconstruction pipeline."""
+    step_number: int
+    title: str
+    feature_id: Optional[str] = None
+    operation_type: Optional[str] = None
+    input_data: Dict[str, Any] = Field(default_factory=dict)
+    evidence: Dict[str, Any] = Field(default_factory=dict)
+    execution_status: str = "PENDING"
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+
+class ReconstructionDebugTrace(BaseModel):
+    """Complete transparent step-by-step audit trace for CAD reconstruction."""
+    reconstruction_id: str = ""
+    project_id: str
+    selected_strategy: str = "AXISYMMETRIC_REVOLVED"
+    total_steps: int = 0
+    executed_steps: int = 0
+    skipped_steps: int = 0
+    failed_steps: int = 0
+    final_status: str = "COMPLETE"
+    detected_views: List[Dict[str, Any]] = Field(default_factory=list)
+    primary_feature_summary: Optional[Dict[str, Any]] = None
+    steps: List[ReconstructionDebugStep] = Field(default_factory=list)
+    station_validations: List[SectionStationValidation] = Field(default_factory=list)
+    validation_summary: Optional[Dict[str, Any]] = None
+    artifact_trace: Optional[ArtifactTrace] = None
+    trace_timestamp: str = ""
 
 
 class ParametricReconstructionPlan(BaseModel):
@@ -193,8 +313,66 @@ class ParametricReconstructionPlan(BaseModel):
     envelope_3d: Dict[str, Optional[float]] = Field(default_factory=dict)
     steps: List[ParametricCADStep] = Field(default_factory=list)
     evidence_audit: Optional[ReconstructionEvidenceAudit] = None
+    debug_trace: Optional[ReconstructionDebugTrace] = None
     unconstrained_parameters: List[str] = Field(default_factory=list)
     ambiguous_features_skipped: List[str] = Field(default_factory=list)
     is_fully_reconstructible: bool = False
     plan_notes: List[str] = Field(default_factory=list)
     plan_timestamp: str = ""
+
+
+# =============================================================================
+# Direct Gemini-Assisted Controlled CAD Reconstruction Models
+# =============================================================================
+
+class CADPartMetadata(BaseModel):
+    part_name: str = "RECONSTRUCTED_PART"
+    drawing_units: str = "mm"
+    material: Optional[str] = None
+    overall_confidence: float = Field(ge=0.0, le=1.0, default=1.0)
+
+
+class CADBoundingBox(BaseModel):
+    x_length: float
+    y_length: float
+    z_length: float
+
+
+class CADCoordinateSystem(BaseModel):
+    origin_description: str = "Bottom-left-rear corner or symmetry center"
+    front_view_plane: str = "XZ"
+    top_view_plane: str = "XY"
+
+
+class DrawingEvidence(BaseModel):
+    source_view: str
+    callout_dimension: str
+    confidence: float = Field(ge=0.0, le=1.0, default=1.0)
+    ambiguity_note: Optional[str] = None
+
+
+class CADOperationStep(BaseModel):
+    step_id: str
+    order: int
+    operation: str  # create_box, create_cylinder, extrude_polygon, cut_feature, union_feature, drill_hole, apply_fillet, apply_chamfer
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+    drawing_evidence: DrawingEvidence
+
+
+class CADValidationCheck(BaseModel):
+    view: str
+    expected_dimension: float
+    measured_axis: str  # "X", "Y", "Z"
+    tolerance: float = 0.5
+
+
+class CADReconstructionPlan(BaseModel):
+    """Direct, evidence-backed CAD reconstruction plan emitted by Gemini CAD brain."""
+    part_metadata: CADPartMetadata = Field(default_factory=CADPartMetadata)
+    bounding_box: CADBoundingBox
+    coordinate_system: CADCoordinateSystem = Field(default_factory=CADCoordinateSystem)
+    reconstruction_steps: List[CADOperationStep] = Field(default_factory=list)
+    validation_checks: List[CADValidationCheck] = Field(default_factory=list)
+    is_fully_constrained: bool = True
+    ambiguous_features: List[str] = Field(default_factory=list)
+

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Upload, FileImage, FileText, Layers, Sparkles, AlertCircle,
   CheckCircle2, ArrowRight, Cpu, ScanLine, Eye
@@ -7,7 +7,6 @@ import { drawingApi, DrawingProjectMeta } from '../../lib/drawingApi';
 
 interface DrawingProjectsPageProps {
   onSelectProject: (projectId: string) => void;
-  theme?: 'light' | 'dark';
 }
 
 const ACCEPTED_FORMATS = ['.pdf', '.png', '.jpg', '.jpeg', '.svg'];
@@ -24,14 +23,28 @@ function formatBytes(b: number): string {
   return `${(b / 1024 / 1024).toFixed(2)} MB`;
 }
 
-export const DrawingProjectsPage: React.FC<DrawingProjectsPageProps> = ({ onSelectProject, theme = 'light' }) => {
+export const DrawingProjectsPage: React.FC<DrawingProjectsPageProps> = ({ onSelectProject }) => {
   const [file, setFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
   const [project, setProject] = useState<DrawingProjectMeta | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [recentProjects, setRecentProjects] = useState<DrawingProjectMeta[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await drawingApi.listProjects();
+        if (!cancelled) setRecentProjects(list);
+      } catch {
+        // ignore
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const validateFile = (f: File): string | null => {
     const ext = f.name.toLowerCase().match(/\.[^.]+$/)?.[0] ?? '';
@@ -219,10 +232,43 @@ export const DrawingProjectsPage: React.FC<DrawingProjectsPageProps> = ({ onSele
         )}
       </div>
 
+      {/* Recent Drawing Projects */}
+      {recentProjects.length > 0 && (
+        <div className="mt-12 space-y-3">
+          <h3 className="text-sm font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+            <ScanLine className="w-4 h-4 text-violet-400" />
+            Existing Drawing Projects ({recentProjects.length})
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {recentProjects.map((p) => (
+              <button
+                key={p.project_id}
+                onClick={() => onSelectProject(p.project_id)}
+                className="text-left rounded-xl border border-slate-800 bg-slate-900/60 hover:bg-slate-800/80 hover:border-violet-500/50 p-4 transition-all flex items-center justify-between group shadow-md"
+              >
+                <div className="min-w-0 flex-1 pr-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="font-semibold text-slate-100 text-sm truncate">{p.filename}</span>
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded border ${
+                      p.status === 'ANALYZED'
+                        ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                        : 'border-slate-700 bg-slate-800 text-slate-400'
+                    }`}>
+                      {p.status}
+                    </span>
+                  </div>
+                  <p className="font-mono text-xs text-slate-500 truncate">{p.project_id}</p>
+                </div>
+                <ArrowRight className="w-4 h-4 text-slate-500 group-hover:text-violet-400 group-hover:translate-x-0.5 transition-all flex-shrink-0" />
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Footer note */}
       <p className="mt-8 text-center text-xs text-slate-600">
         The original drawing file is preserved as immutable source evidence and never modified.
-        No CAD geometry is generated in Phase 17.
       </p>
     </div>
   );

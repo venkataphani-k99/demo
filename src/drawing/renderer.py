@@ -44,21 +44,6 @@ def _png_dimensions(data: bytes) -> Optional[Tuple[int, int]]:
         return None
 
 
-def _write_placeholder_png(path: Path, width: int = 100, height: int = 100) -> None:
-    """Writes a minimal valid PNG for testing purposes."""
-    import zlib
-
-    def _chunk(t: bytes, d: bytes) -> bytes:
-        crc = struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
-        return struct.pack(">I", len(d)) + t + d + crc
-
-    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
-    raw_rows = b"\x00" + b"\xFF\xFF\xFF" * width
-    idat = zlib.compress(raw_rows * height, 1)
-    png_bytes = b"\x89PNG\r\n\x1a\n" + _chunk(b"IHDR", ihdr) + _chunk(b"IDAT", idat) + _chunk(b"IEND", b"")
-    path.write_bytes(png_bytes)
-
-
 def is_blank_image(png_path: Path) -> Tuple[bool, str]:
     """Inspects a PNG file to verify it is not blank/monochrome/corrupt.
 
@@ -519,3 +504,94 @@ def build_manifest(
         prompt_length_chars=len(prompt),
         request_timestamp=datetime.now(timezone.utc).isoformat(),
     )
+
+
+def crop_detected_views(
+    png_path: Path,
+    views: List[Any],
+    output_dir: Path,
+    padding_pct: float = 0.05,
+) -> Dict[str, Path]:
+    """Crop individual orthographic views from the full drawing PNG at high resolution.
+
+    Parameters
+    ----------
+    png_path : Path
+        Path to the high-resolution normalized drawing PNG.
+    views : List[DetectedView]
+        List of detected views with bounding boxes.
+    output_dir : Path
+        Destination directory for cropped view images.
+    padding_pct : float
+        Proportional margin around each view bbox to include nearby dimension callouts.
+
+    Returns
+    -------
+    Dict[str, Path]
+        Mapping from view_id to cropped PNG image path.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    crop_map: Dict[str, Path] = {}
+
+    try:
+        from PIL import Image
+        with Image.open(png_path) as im:
+            img_w, img_h = im.size
+
+            for v in views:
+                vid = getattr(v, "view_id", "view")
+                vtype = str(getattr(v, "view_type", "view")).lower()
+                bbox = getattr(v, "bbox", None)
+                if not bbox:
+                    continue
+
+                x1 = float(getattr(bbox, "x1", 0.0))
+                y1 = float(getattr(bbox, "y1", 0.0))
+                x2 = float(getattr(bbox, "x2", 0.0))
+                y2 = float(getattr(bbox, "y2", 0.0))
+
+                if x2 <= x1 or y2 <= y1:
+                    continue
+
+                # Add padding
+                w_box = x2 - x1
+                h_box = y2 - y1
+                pad_x = w_box * padding_pct
+                pad_y = h_box * padding_pct
+
+                crop_x1 = max(0, int(x1 - pad_x))
+                crop_y1 = max(0, int(y1 - pad_y))
+                crop_x2 = min(img_w, int(x2 + pad_x))
+                crop_y2 = min(img_h, int(y2 + pad_y))
+
+                if crop_x2 <= crop_x1 or crop_y2 <= crop_y1:
+                    continue
+
+                cropped = im.crop((crop_x1, crop_y1, crop_x2, crop_y2))
+                out_name = f"view_{vid}_{vtype}.png"
+                out_path = output_dir / out_name
+                cropped.save(str(out_path), "PNG")
+                crop_map[vid] = out_path
+
+    except Exception:
+        pass
+
+    return crop_map
+
+
+def _write_placeholder_png(path: Path, width: int = 100, height: int = 100) -> None:
+    """Generate a minimal valid PNG for test stubbing."""
+    import zlib
+    raw_data = b"\x00" + b"\x80" * (width * 3)
+    compressed = zlib.compress(raw_data * height)
+    ihdr_data = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    ihdr_crc = struct.pack(">I", zlib.crc32(b"IHDR" + ihdr_data))
+    idat_crc = struct.pack(">I", zlib.crc32(b"IDAT" + compressed))
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n"
+        + struct.pack(">I", len(ihdr_data)) + b"IHDR" + ihdr_data + ihdr_crc
+        + struct.pack(">I", len(compressed)) + b"IDAT" + compressed + idat_crc
+        + struct.pack(">I", 0) + b"IEND" + struct.pack(">I", zlib.crc32(b"IEND"))
+    )
+    path.write_bytes(png_bytes)
+

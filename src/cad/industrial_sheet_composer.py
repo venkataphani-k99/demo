@@ -420,7 +420,7 @@ class DynamicSheetComposer:
         h: float,
     ) -> str:
         res = [f'<g class="drawing-view" id="section-view">\n']
-        res.append(f'  <text x="{cx}" y="{cy - (h * scale) / 2.0 - 28}" text-anchor="middle" font-size="11" font-weight="900" fill="#0f172a" letter-spacing="1.2">SECTION A—A</text>\n')
+        res.append(f'  <text x="{cx}" y="{cy - (h * scale) / 2.0 - 28}" text-anchor="middle" font-size="11" font-weight="900" fill="#0f172a" letter-spacing="1.2">SECTION CUT A—A</text>\n')
 
         # Centerlines
         res.append(f'  <line x1="{cx}" y1="{cy - (h * scale) / 2.0 - 15}" x2="{cx}" y2="{cy + (h * scale) / 2.0 + 15}" stroke="#0284c7" stroke-width="0.8" stroke-dasharray="10,3,2,3"/>\n')
