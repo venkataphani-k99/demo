@@ -35,6 +35,7 @@ class DrawingService:
         projection: str = "third-angle",
         template: str = "A3_Landscape_blank.svg",
         scale: float = 0.0,
+        force: bool = False,
     ) -> DrawingResponse:
         """Generate standard 5-view orthographic drawing (Phase 6) protected by concurrency mutex."""
         lock = self._get_project_lock(project_id)
@@ -51,7 +52,7 @@ class DrawingService:
                 svg_path = pdir / f"{base_name}_drawing.svg"
                 dxf_path = pdir / f"{base_name}_drawing.dxf"
 
-                if not svg_path.exists():
+                if force or not svg_path.exists():
                     from src.cad.freecad_env import get_freecad_python
                     py_exe = get_freecad_python()
                     title = base_name.replace("_", " ")

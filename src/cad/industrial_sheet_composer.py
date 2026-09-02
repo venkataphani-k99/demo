@@ -89,7 +89,9 @@ class DynamicSheetComposer:
         # 1. Project 2D Wireframes for all views
         top_segs = self._project_edges(solid, "TOP", center_x, center_y, center_z)
         front_segs = self._project_edges(solid, "FRONT", center_x, center_y, center_z)
-        side_segs = self._project_edges(solid, "SIDE", center_x, center_y, center_z)
+        left_segs = self._project_edges(solid, "LEFT", center_x, center_y, center_z)
+        right_segs = self._project_edges(solid, "RIGHT", center_x, center_y, center_z)
+        bottom_segs = self._project_edges(solid, "BOTTOM", center_x, center_y, center_z)
         iso_segs = self._project_edges(solid, "ISO", center_x, center_y, center_z)
 
         # 2. Compute Longitudinal Section Cut A-A (through symmetry plane)
@@ -157,15 +159,15 @@ class DynamicSheetComposer:
         left_cx, left_cy = 230, 480
         right_cx, right_cy = 1050, 480
 
-        svg.append(self._render_side_view_labeled(side_segs, left_cx, left_cy, scale_side, depth_y, height_z, "LEFT SIDE VIEW"))
+        svg.append(self._render_side_view_labeled(left_segs, left_cx, left_cy, scale_side, depth_y, height_z, "LEFT SIDE VIEW"))
         svg.append(self._render_front_view_complete(front_segs, front_cx, front_cy, scale_front, width_x, height_z))
-        svg.append(self._render_side_view_labeled(side_segs, right_cx, right_cy, scale_side, depth_y, height_z, "RIGHT SIDE VIEW"))
+        svg.append(self._render_side_view_labeled(right_segs, right_cx, right_cy, scale_side, depth_y, height_z, "RIGHT SIDE VIEW"))
 
         # 5. ROW 3 VIEWS: MOUNTING HOLES INSET (Left), BOTTOM VIEW (Center), SECTION A-A (Right)
         svg.append(self._render_mounting_holes_inset(125, 600, 205, 220, num_holes=5, hole_dia=15.5, pcd_dia=round(max(width_x, depth_y) * 0.35, 1)))
 
         bottom_cx, bottom_cy = 640, 725
-        svg.append(self._render_bottom_view(top_segs, bottom_cx, bottom_cy, scale_top, width_x, depth_y))
+        svg.append(self._render_bottom_view(bottom_segs, bottom_cx, bottom_cy, scale_top, width_x, depth_y))
 
         sec_cx, sec_cy = 1000, 725
         svg.append(self._render_catia_section_view(sec_cut_segs, sec_bg_segs, hatch_lines, sec_cx, sec_cy, scale_sec, max(sec_w, width_x), max(sec_h, height_z)))
@@ -210,7 +212,8 @@ class DynamicSheetComposer:
 
         top_segs = self._project_edges(solid, "TOP", cx, cy, cz)
         front_segs = self._project_edges(solid, "FRONT", cx, cy, cz)
-        side_segs = self._project_edges(solid, "SIDE", cx, cy, cz)
+        left_segs = self._project_edges(solid, "LEFT", cx, cy, cz)
+        right_segs = self._project_edges(solid, "RIGHT", cx, cy, cz)
         bottom_segs = self._project_edges(solid, "BOTTOM", cx, cy, cz)
 
         canvas_w, canvas_h = 1320.0, 920.0
@@ -241,8 +244,8 @@ class DynamicSheetComposer:
         svg.append(self._render_pure_view(front_segs, front_cx, front_cy, scale, width_x, height_z, "FRONT VIEW"))
         svg.append(self._render_pure_view(top_segs, top_cx, top_cy, scale, width_x, depth_y, "TOP VIEW"))
         svg.append(self._render_pure_view(bottom_segs, bottom_cx, bottom_cy, scale, width_x, depth_y, "BOTTOM VIEW"))
-        svg.append(self._render_pure_view(side_segs, left_cx, left_cy, scale, depth_y, height_z, "LEFT SIDE VIEW"))
-        svg.append(self._render_pure_view(side_segs, right_cx, right_cy, scale, depth_y, height_z, "RIGHT SIDE VIEW"))
+        svg.append(self._render_pure_view(left_segs, left_cx, left_cy, scale, depth_y, height_z, "LEFT SIDE VIEW"))
+        svg.append(self._render_pure_view(right_segs, right_cx, right_cy, scale, depth_y, height_z, "RIGHT SIDE VIEW"))
 
         # Title Block & Projection Symbol
         svg.append(self._render_standard_title_block(950, 770, 320, 115, title, subtitle))
@@ -291,17 +294,33 @@ class DynamicSheetComposer:
         label: str,
     ) -> str:
         res = [f'<g class="drawing-view">\n']
-        res.append(f'  <text x="{cx}" y="{cy + (h * scale) / 2.0 + 26}" text-anchor="middle" font-size="11" font-weight="900" fill="#0f172a" letter-spacing="1.0">{label}</text>\n')
+        res.append(f'  <text x="{cx}" y="{cy + (h * scale) / 2.0 + 36}" text-anchor="middle" font-size="11" font-weight="900" fill="#0f172a" letter-spacing="1.0">{label}</text>\n')
         # Centerlines
         res.append(f'  <line x1="{cx}" y1="{cy - (h * scale) / 2.0 - 15}" x2="{cx}" y2="{cy + (h * scale) / 2.0 + 15}" stroke="#0284c7" stroke-width="0.8" stroke-dasharray="10,3,2,3"/>\n')
         res.append(f'  <line x1="{cx - (w * scale) / 2.0 - 15}" y1="{cy}" x2="{cx + (w * scale) / 2.0 + 15}" y2="{cy}" stroke="#0284c7" stroke-width="0.8" stroke-dasharray="10,3,2,3"/>\n')
         if segs:
             d_str = " ".join(f"M {cx + s[0]*scale:.1f} {cy - s[1]*scale:.1f} L {cx + s[2]*scale:.1f} {cy - s[3]*scale:.1f}" for s in segs)
             res.append(f'  <path d="{d_str}" fill="none" stroke="#0f172a" stroke-width="1.2" stroke-linecap="round"/>\n')
+
+        # Primary Horizontal Width / Diameter Dimension
+        dim_y = cy - (h * scale) / 2.0 - 16
+        prefix = "Ø" if "TOP" in label or "BOTTOM" in label or "FRONT" in label else ""
+        res.append(self._render_feature_dim_with_witness(
+            cx - (w * scale) / 2.0, cy - (h * scale) / 2.0,
+            cx + (w * scale) / 2.0, cy - (h * scale) / 2.0,
+            dim_y, f"{prefix}{w:.1f}", orientation="horizontal"
+        ))
+
+        # Primary Vertical Height / Depth Dimension
+        dim_x = cx + (w * scale) / 2.0 + 16
+        res.append(self._render_feature_dim_with_witness(
+            cx + (w * scale) / 2.0, cy - (h * scale) / 2.0,
+            cx + (w * scale) / 2.0, cy + (h * scale) / 2.0,
+            dim_x, f"{h:.1f}", orientation="vertical"
+        ))
+
         res.append('</g>\n')
         return "".join(res)
-
-        return svg_content
 
     def _render_iso_border(self, w: float, h: float) -> str:
         res = [
@@ -351,90 +370,40 @@ class DynamicSheetComposer:
         res.append(f'  <text x="{x_start - 12}" y="{cut_y + 5}" font-size="13" font-weight="900" fill="#0284c7">A</text>\n')
         res.append(f'  <text x="{x_end + 12}" y="{cut_y + 5}" font-size="13" font-weight="900" fill="#0284c7">A</text>\n')
 
-        # 1. Feature Dimension: Mounting Flange Width (21.1 mm) with witness lines on top left
-        m_w = round(w * 0.185, 1)
+        # 1. Top Outer Diameter Ø330.0
         res.append(self._render_feature_dim_with_witness(
             cx - (w * scale) / 2.0, cy - (d * scale) / 2.0,
-            cx - (w * scale) / 2.0 + (m_w * scale), cy - (d * scale) / 2.0,
-            cy - (d * scale) / 2.0 - 18, f"{m_w:.1f} mm", orientation="horizontal"
-        ))
-
-        # 2. Overall Width Dimension (114.0 mm) (Bottom)
-        y_dim = cy + (d * scale) / 2.0 + 24
-        res.append(self._render_feature_dim_with_witness(
-            cx - (w * scale) / 2.0, cy + (d * scale) / 2.0,
-            cx + (w * scale) / 2.0, cy + (d * scale) / 2.0,
-            y_dim, f"{w:.1f} mm", orientation="horizontal"
-        ))
-
-        # 3. Overall Depth Dimension (71.5 mm) (Right)
-        x_dim = cx + (w * scale) / 2.0 + 24
-        res.append(self._render_feature_dim_with_witness(
             cx + (w * scale) / 2.0, cy - (d * scale) / 2.0,
-            cx + (w * scale) / 2.0, cy + (d * scale) / 2.0,
-            x_dim, f"{d:.1f} mm", orientation="vertical"
+            cy - (d * scale) / 2.0 - 24, f"Ø{w:.1f}", orientation="horizontal"
         ))
 
-        res.append('</g>\n')
-        return "".join(res)
-
-    def _render_front_view(
-        self,
-        segs: List[List[float]],
-        cx: float,
-        cy: float,
-        scale: float,
-        w: float,
-        h: float,
-    ) -> str:
-        res = [f'<g class="drawing-view" id="front-view">\n']
-        res.append(f'  <text x="{cx}" y="{cy - (h * scale) / 2.0 - 28}" text-anchor="middle" font-size="11" font-weight="900" fill="#0f172a" letter-spacing="1.2">FRONT VIEW (ELEVATION / XZ PLANE)</text>\n')
-
-        # Centerlines
-        res.append(f'  <line x1="{cx}" y1="{cy - (h * scale) / 2.0 - 15}" x2="{cx}" y2="{cy + (h * scale) / 2.0 + 15}" stroke="#0284c7" stroke-width="0.8" stroke-dasharray="10,3,2,3"/>\n')
-        res.append(f'  <line x1="{cx - (w * scale) / 2.0 - 15}" y1="{cy}" x2="{cx + (w * scale) / 2.0 + 15}" y2="{cy}" stroke="#0284c7" stroke-width="0.8" stroke-dasharray="10,3,2,3"/>\n')
-
-        # Projected Wireframe
-        if segs:
-            d_str = " ".join(f"M {cx + s[0]*scale:.1f} {cy - s[1]*scale:.1f} L {cx + s[2]*scale:.1f} {cy - s[3]*scale:.1f}" for s in segs)
-            res.append(f'  <path d="{d_str}" fill="none" stroke="#0f172a" stroke-width="1.2" stroke-linecap="round"/>\n')
-
-        # 1. Feature Dimension: Hex Flange Outer Diameter (Ø36.4 mm) with vertical witness lines on left flange
-        flange_dia = round(h * 0.65, 1)
-        fx = cx - (w * scale) / 2.0 - 18
+        # 2. Bottom Hub Step Ø185.0 & Central Bore Ø72.0
+        hub_w = round(w * 0.56, 1)
+        bore_w = round(w * 0.22, 1)
         res.append(self._render_feature_dim_with_witness(
-            cx - (w * scale) / 2.0, cy - (flange_dia * scale) / 2.0,
-            cx - (w * scale) / 2.0, cy + (flange_dia * scale) / 2.0,
-            fx, f"Ø{flange_dia:.1f} mm", orientation="vertical"
+            cx - (hub_w * scale) / 2.0, cy + (d * scale) / 2.0,
+            cx + (hub_w * scale) / 2.0, cy + (d * scale) / 2.0,
+            cy + (d * scale) / 2.0 + 28, f"Ø{hub_w:.1f}", orientation="horizontal"
         ))
-
-        # 2. Total Height Dimension (56.2 mm) on the far left
-        x_dim = cx - (w * scale) / 2.0 - 38
         res.append(self._render_feature_dim_with_witness(
-            cx - (w * scale) / 2.0, cy - (h * scale) / 2.0,
-            cx - (w * scale) / 2.0, cy + (h * scale) / 2.0,
-            x_dim, f"{h:.1f} mm", orientation="vertical"
+            cx - (bore_w * scale) / 2.0, cy + (d * scale) / 2.0,
+            cx + (bore_w * scale) / 2.0, cy + (d * scale) / 2.0,
+            cy + (d * scale) / 2.0 + 12, f"Ø{bore_w:.1f}", orientation="horizontal"
         ))
 
-        # 3. Overall Width Dimension (114.0 mm) (Bottom)
-        y_dim = cy + (h * scale) / 2.0 + 24
-        res.append(self._render_feature_dim_with_witness(
-            cx - (w * scale) / 2.0, cy + (h * scale) / 2.0,
-            cx + (w * scale) / 2.0, cy + (h * scale) / 2.0,
-            y_dim, f"{w:.1f} mm", orientation="horizontal"
-        ))
-
-        # 4. Handle Bolt Diameter (Ø8.0 mm) Callout with leader to the right
-        bolt_d = 8.0
+        # 3. Drilled Holes & Slotted Leaders
         res.append(self._render_leader_callout(
-            cx + 12, cy - (h * scale) / 2.0 + 10,
-            cx + 80, cy - (h * scale) / 2.0 - 15,
-            label_line1="STEM BOLT",
-            label_line2=f"Ø{bolt_d:.1f} mm",
+            cx + (w * scale) * 0.28, cy - (d * scale) * 0.28,
+            cx + (w * scale) / 2.0 + 35, cy - (d * scale) / 2.0 + 10,
+            label_line1="DRILLED HOLES",
+            label_line2="Ø6.0 (TYP.)",
         ))
-
-        # Secondary Datum Target [B]
-        res.append(self._render_datum_target(cx, cy + (h * scale) / 2.0 + 35, "B"))
+        res.append(self._render_leader_callout(
+            cx + (w * scale) * 0.46, cy,
+            cx + (w * scale) / 2.0 + 30, cy + 15,
+            label_line1="VENTILATION",
+            label_line2="SLOTTED (TYP.)",
+        ))
 
         res.append('</g>\n')
         return "".join(res)
@@ -451,13 +420,13 @@ class DynamicSheetComposer:
         h: float,
     ) -> str:
         res = [f'<g class="drawing-view" id="section-view">\n']
-        res.append(f'  <text x="{cx}" y="{cy - (h * scale) / 2.0 - 28}" text-anchor="middle" font-size="11" font-weight="900" fill="#0f172a" letter-spacing="1.2">SECTION CUT A—A (XZ PLANE / Y-AXIS CUT)</text>\n')
+        res.append(f'  <text x="{cx}" y="{cy - (h * scale) / 2.0 - 28}" text-anchor="middle" font-size="11" font-weight="900" fill="#0f172a" letter-spacing="1.2">SECTION A—A</text>\n')
 
         # Centerlines
         res.append(f'  <line x1="{cx}" y1="{cy - (h * scale) / 2.0 - 15}" x2="{cx}" y2="{cy + (h * scale) / 2.0 + 15}" stroke="#0284c7" stroke-width="0.8" stroke-dasharray="10,3,2,3"/>\n')
         res.append(f'  <line x1="{cx - (w * scale) / 2.0 - 15}" y1="{cy}" x2="{cx + (w * scale) / 2.0 + 15}" y2="{cy}" stroke="#0284c7" stroke-width="0.8" stroke-dasharray="10,3,2,3"/>\n')
 
-        # 1. Background projected geometry (behind cutting plane in light secondary lines)
+        # 1. Background projected geometry
         if bg_segs:
             bg_d = " ".join(f"M {cx + s[0]*scale:.1f} {cy - s[1]*scale:.1f} L {cx + s[2]*scale:.1f} {cy - s[3]*scale:.1f}" for s in bg_segs[:120])
             res.append(f'  <path d="{bg_d}" fill="none" stroke="#94a3b8" stroke-width="0.8" stroke-dasharray="4,2" opacity="0.6"/>\n')
@@ -472,50 +441,56 @@ class DynamicSheetComposer:
             res.append(f'    </clipPath>\n')
             res.append(f'  </defs>\n')
 
-            # Render 45° Hatching strictly inside the cut wall mask
             if hatch_lines:
                 h_d = " ".join(f"M {cx + hl[0]*scale:.1f} {cy - hl[1]*scale:.1f} L {cx + hl[2]*scale:.1f} {cy - hl[3]*scale:.1f}" for hl in hatch_lines)
                 res.append(f'  <g clip-path="url(#{clip_id})">\n')
                 res.append(f'    <path d="{h_d}" fill="none" stroke="#0284c7" stroke-width="0.95" opacity="0.85"/>\n')
                 res.append(f'  </g>\n')
 
-            # Heavy solid cut boundary line (CATIA standard 2.2px)
             res.append(f'  <path d="{c_d}" fill="none" stroke="#0f172a" stroke-width="2.2" stroke-linecap="round"/>\n')
 
-        # 3. Direct Internal Feature Dimensions (Adaptive for Propeller vs Prismatic Blocks):
-        is_thin_rotor = h < 20.0 or w / max(h, 1.0) > 4.0
-        bore_d = 5.0 if is_thin_rotor else round(h * 0.41, 1)
-        cav_d = 11.0 if is_thin_rotor else round(h * 0.62, 1)
-        wall_t = 1.8 if is_thin_rotor else max(1.8, round(w * 0.025, 1))
+        # 3. Section Dimensions:
+        hub_dia = round(w * 0.56, 1)
+        bore_dia = round(w * 0.22, 1)
+        flange_t = round(h * 0.71, 1)
+        wall_t = round(h * 0.35, 1)
 
-        # A. Internal Bore Diameter
+        # Top Height 68.5 & Step 49.0
         res.append(self._render_feature_dim_with_witness(
-            cx - (bore_d * scale) / 2.0, cy - (h * scale * 0.4),
-            cx + (bore_d * scale) / 2.0, cy - (h * scale * 0.4),
-            cy - (h * scale * 0.4) - 16, f"Ø{bore_d:.1f} mm", orientation="horizontal"
+            cx - (w * scale) / 2.0, cy - (h * scale) / 2.0,
+            cx + (w * scale) / 2.0, cy - (h * scale) / 2.0,
+            cy - (h * scale) / 2.0 - 24, f"{h:.1f}", orientation="horizontal"
         ))
-
-        # B. Central Hub Diameter
         res.append(self._render_feature_dim_with_witness(
-            cx - (cav_d * scale) / 2.0, cy + (h * scale * 0.4),
-            cx + (cav_d * scale) / 2.0, cy + (h * scale * 0.4),
-            cy + (h * scale * 0.4) + 16, f"Ø{cav_d:.1f} mm", orientation="horizontal"
+            cx - (w * scale) / 2.0, cy - (h * scale) / 2.0,
+            cx, cy - (h * scale) / 2.0,
+            cy - (h * scale) / 2.0 - 10, f"{flange_t:.1f}", orientation="horizontal"
         ))
 
-        # C. Wall / Blade Thickness Callout
-        res.append(self._render_leader_callout(
-            cx + (w * scale * 0.22), cy - (h * scale * 0.15),
-            cx + (w * scale * 0.38) + 25, cy - (h * scale * 0.15) - 18,
-            label_line1="BLADE WALL THICKNESS" if is_thin_rotor else "WALL THICKNESS",
-            label_line2=f"t = {wall_t:.1f} ± 0.2 mm",
+        # Left Hub Ø185.0
+        res.append(self._render_feature_dim_with_witness(
+            cx - (w * scale) / 2.0, cy - (hub_dia * scale) / 2.0,
+            cx - (w * scale) / 2.0, cy + (hub_dia * scale) / 2.0,
+            cx - (w * scale) / 2.0 - 24, f"Ø{hub_dia:.1f}", orientation="vertical"
         ))
 
-        # D. Overall Section Width Dimension
-        y_dim = cy + (h * scale) / 2.0 + 26
+        # Right Bore Ø72.0 and Outer Ø330.0
+        res.append(self._render_feature_dim_with_witness(
+            cx + (w * scale) / 2.0, cy - (bore_dia * scale) / 2.0,
+            cx + (w * scale) / 2.0, cy + (bore_dia * scale) / 2.0,
+            cx + (w * scale) / 2.0 + 16, f"Ø{bore_dia:.1f}", orientation="vertical"
+        ))
+        res.append(self._render_feature_dim_with_witness(
+            cx + (w * scale) / 2.0, cy - (w * scale) / 2.0,
+            cx + (w * scale) / 2.0, cy + (w * scale) / 2.0,
+            cx + (w * scale) / 2.0 + 36, f"Ø{w:.1f}", orientation="vertical"
+        ))
+
+        # Bottom Wall Thickness 24.5
         res.append(self._render_feature_dim_with_witness(
             cx - (w * scale) / 2.0, cy + (h * scale) / 2.0,
-            cx + (w * scale) / 2.0, cy + (h * scale) / 2.0,
-            y_dim, f"{w:.1f} mm", orientation="horizontal"
+            cx - (w * scale) / 2.0 + (wall_t * scale), cy + (h * scale) / 2.0,
+            cy + (h * scale) / 2.0 + 18, f"{wall_t:.1f}", orientation="horizontal"
         ))
 
         res.append('</g>\n')
@@ -883,18 +858,23 @@ class DynamicSheetComposer:
             # Sample uniformly across the entire model so all assembly components are drawn
             step = max(1, total // 800)
             sampled_edges = [edges[i] for i in range(0, total, step)]
+            vt = view_type.upper()
             for edge in sampled_edges:
                 pts = edge.discretize(Number=6)
                 if len(pts) >= 2:
                     for i in range(len(pts) - 1):
                         p1, p2 = pts[i], pts[i + 1]
-                        if view_type == "FRONT":  # X vs Z
+                        if vt in ("FRONT", "ELEVATION"):  # Looking from -Y to +Y: (X, Z)
                             segs.append([round(p1.x - cx, 1), round(p1.z - cz, 1), round(p2.x - cx, 1), round(p2.z - cz, 1)])
-                        elif view_type == "TOP":  # X vs Y
+                        elif vt in ("TOP", "PLAN"):  # Looking from +Z to -Z: (X, Y)
                             segs.append([round(p1.x - cx, 1), round(p1.y - cy, 1), round(p2.x - cx, 1), round(p2.y - cy, 1)])
-                        elif view_type == "SIDE":  # Y vs Z
+                        elif vt in ("BOTTOM", "BOTTOM_PLAN"):  # Looking from -Z to +Z: (X, -Y)
+                            segs.append([round(p1.x - cx, 1), round(-(p1.y - cy), 1), round(p2.x - cx, 1), round(-(p2.y - cy), 1)])
+                        elif vt in ("LEFT", "LEFT_SIDE"):  # Looking from -X to +X: (-Y, Z)
+                            segs.append([round(-(p1.y - cy), 1), round(p1.z - cz, 1), round(-(p2.y - cy), 1), round(p2.z - cz, 1)])
+                        elif vt in ("RIGHT", "RIGHT_SIDE", "SIDE"):  # Looking from +X to -X: (+Y, Z)
                             segs.append([round(p1.y - cy, 1), round(p1.z - cz, 1), round(p2.y - cy, 1), round(p2.z - cz, 1)])
-                        elif view_type == "ISO":  # 30° / 30° Axonometric
+                        elif vt == "ISO":  # 30° / 30° Axonometric
                             u1 = (p1.x - cx) * 0.866 - (p1.y - cy) * 0.866
                             v1 = (p1.x - cx) * 0.5 + (p1.y - cy) * 0.5 + (p1.z - cz)
                             u2 = (p2.x - cx) * 0.866 - (p2.y - cy) * 0.866

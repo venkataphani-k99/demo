@@ -25,7 +25,7 @@ def download_artifact(project_id: str, artifact_id: str, force: bool = False, t:
         if artifact_id == "industrial_drawing_svg":
             art_path = ds.generate_industrial_sheet(project_id, force=force)
         elif artifact_id == "drawing_svg" and force:
-            res = ds.generate_standard_drawing(project_id)
+            res = ds.generate_standard_drawing(project_id, force=True)
             art_path = project_service.get_artifact_path(project_id, "drawing_svg")
         else:
             try:
