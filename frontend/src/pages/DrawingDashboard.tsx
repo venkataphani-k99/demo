@@ -5,7 +5,7 @@ import {
   Download, RefreshCw, Info, Boxes, Compass, Sparkles, SlidersHorizontal, Maximize2, Box, Zap
 } from 'lucide-react';
 import { Viewer3D } from '../components/Viewer3D';
-import { MoldAnalysisPanel } from '../components/MoldAnalysisPanel';
+import { MoldAnalysisViewer } from '../components/MoldAnalysisViewer';
 import {
   drawingApi,
   DrawingUnderstanding,
@@ -25,6 +25,7 @@ import {
 
 interface DrawingDashboardProps {
   projectId: string;
+  theme?: 'light' | 'dark';
 }
 
 // ---------------------------------------------------------------------------
@@ -410,9 +411,11 @@ function FeatureGraphPanel({ fg }: { fg?: FeatureGraph | null }) {
 function BlueprintPanel({
   projectId,
   understanding,
+  theme = 'dark',
 }: {
   projectId: string;
   understanding?: DrawingUnderstanding;
+  theme?: 'light' | 'dark';
 }) {
   const [plan, setPlan] = useState<ParametricReconstructionPlan | null>(null);
   const [loading, setLoading] = useState(true);
@@ -564,10 +567,7 @@ function BlueprintPanel({
           <div className="h-[520px] w-full relative">
             <Viewer3D
               projectId={projectId}
-              meshUrl={drawingApi.getMeshUrl(projectId)}
-              features={synthFeatures}
-              selectedFeatureId={selectedFeatureId}
-              onSelectFeature={setSelectedFeatureId}
+              theme={theme}
             />
           </div>
         </div>
@@ -975,7 +975,7 @@ const TABS = [
   { id: 'validation', label: 'Validation', icon: <CheckCircle2 className="w-4 h-4" /> },
 ];
 
-export const DrawingDashboard: React.FC<DrawingDashboardProps> = ({ projectId }) => {
+export const DrawingDashboard: React.FC<DrawingDashboardProps> = ({ projectId, theme = 'dark' }) => {
   const [loading, setLoading] = useState(true);
   const [understanding, setUnderstanding] = useState<DrawingUnderstanding | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1230,12 +1230,12 @@ export const DrawingDashboard: React.FC<DrawingDashboardProps> = ({ projectId })
 
         {/* 3D Blueprint Tab */}
         {activeTab === 'blueprint' && (
-          <BlueprintPanel projectId={projectId} understanding={u} />
+          <BlueprintPanel projectId={projectId} understanding={u} theme={theme} />
         )}
 
         {/* Mold Analysis Tab */}
         {activeTab === 'mold' && (
-          <MoldAnalysisPanel projectId={projectId} />
+          <MoldAnalysisViewer projectId={projectId} theme={theme} />
         )}
 
         {/* Views tab */}

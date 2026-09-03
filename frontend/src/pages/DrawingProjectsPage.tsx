@@ -7,6 +7,7 @@ import { drawingApi, DrawingProjectMeta } from '../../lib/drawingApi';
 
 interface DrawingProjectsPageProps {
   onSelectProject: (projectId: string) => void;
+  theme?: 'light' | 'dark';
 }
 
 const ACCEPTED_FORMATS = ['.pdf', '.png', '.jpg', '.jpeg', '.svg'];
